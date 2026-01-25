@@ -1,0 +1,112 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String         @id @default(uuid())
+  email          String         @unique
+  passwordHash   String?
+  name           String?
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           String         @default("user")
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@map("users")
+}
+
+model Organization {
+  id            String         @id @default(uuid())
+  name          String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  users         User[]
+  platforms     Platform[]
+  customers     Customer[]
+  conversations Conversation[]
+  messages      Message[]
+
+  @@map("organizations")
+}
+
+model Platform {
+  id             String         @id @default(uuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  type           String         // facebook, instagram, whatsapp
+  pageId         String         // Platform-specific page/account ID
+  accessToken    String         // OAuth access token
+  credentials    Json?          // Additional credentials if needed
+  isActive       Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  customers      Customer[]
+  conversations  Conversation[]
+
+  @@unique([organizationId, type, pageId])
+  @@map("platforms")
+}
+
+model Customer {
+  id             String         @id @default(uuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  platformId     String
+  platform       Platform       @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  externalId     String         // Platform-specific customer ID
+  name           String?
+  email          String?
+  phone          String?
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  conversations  Conversation[]
+
+  @@unique([platformId, externalId])
+  @@map("customers")
+}
+
+model Conversation {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  platformId     String
+  platform       Platform     @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  customerId     String
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  status         String       @default("open") // open, closed, archived
+  lastMessageAt  DateTime     @default(now())
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  messages       Message[]
+
+  @@unique([platformId, customerId])
+  @@map("conversations")
+}
+
+model Message {
+  id                String       @id @default(uuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversationId    String
+  conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderType        String       // customer, agent, system
+  platformMessageId String?
+  content           String
+  contentType       String       @default("text") // text, image, video, audio, file
+  rawPayload        Json?
+  sentAt            DateTime     @default(now())
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@map("messages")
+}
