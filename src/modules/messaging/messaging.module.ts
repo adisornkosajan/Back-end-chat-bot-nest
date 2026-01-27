@@ -3,11 +3,13 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { MessagingService } from './messaging.service';
 import { MessagingController } from './messaging.controller';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { AiModule } from '../ai/ai.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     RealtimeModule,
+    AiModule,
   ],
   providers: [MessagingService],
   controllers: [MessagingController],

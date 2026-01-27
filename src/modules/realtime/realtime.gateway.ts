@@ -90,11 +90,21 @@ export class RealtimeGateway
   }
 
   emitNewMessage(orgId: string, conversationId: string, payload: any) {
+    console.log('═══════════════════════════════════════');
+    console.log('📤 EMITTING message:new event');
+    console.log('Organization ID:', orgId);
+    console.log('Room:', `org:${orgId}`);
+    console.log('Conversation ID:', conversationId);
+    console.log('Message ID:', payload.id);
+    console.log('═══════════════════════════════════════');
+    
     this.server
       .to(`org:${orgId}`)
       .emit('message:new', {
         conversationId,
         message: payload,
       });
+    
+    console.log('✅ Event emitted successfully');
   }
 }

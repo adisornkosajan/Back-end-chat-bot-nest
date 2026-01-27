@@ -104,7 +104,7 @@ model Message {
   conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   senderType        String       // customer, agent, system
   platformMessageId String?
-  content           String
+  content           String       @db.LongText // Support very long messages (up to 4GB)
   contentType       String       @default("text") // text, image, video, audio, file
   rawPayload        Json?
   sentAt            DateTime     @default(now())

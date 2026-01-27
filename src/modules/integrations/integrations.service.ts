@@ -70,7 +70,17 @@ export class IntegrationsService {
   }
 
   async connectFacebookPage(organizationId: string, pageId: string) {
-    this.logger.log(`Connecting Facebook page: ${pageId}`);
+    this.logger.log(`🔌 Connecting Facebook page: ${pageId} to org: ${organizationId}`);
+
+    // 🔒 CRITICAL: Validate organization exists
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+
+    if (!organization) {
+      this.logger.error(`❌ Invalid organizationId: ${organizationId}`);
+      throw new NotFoundException('Organization not found');
+    }
 
     // หา access token จาก platforms ที่มีอยู่
     const fbPlatforms = await this.prisma.platform.findMany({
@@ -83,6 +93,7 @@ export class IntegrationsService {
     });
 
     if (fbPlatforms.length === 0) {
+      this.logger.warn(`⚠️ No Facebook account connected for org: ${organizationId}`);
       throw new NotFoundException('No Facebook account connected. Please authenticate first.');
     }
 
@@ -258,7 +269,17 @@ export class IntegrationsService {
     accessToken?: string,
     accountData?: any,
   ) {
-    this.logger.log(`Connecting Instagram account: ${accountId}`);
+    this.logger.log(`🔌 Connecting Instagram account: ${accountId} to org: ${organizationId}`);
+
+    // 🔒 CRITICAL: Validate organization exists
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+
+    if (!organization) {
+      this.logger.error(`❌ Invalid organizationId: ${organizationId}`);
+      throw new NotFoundException('Organization not found');
+    }
 
     // ถ้าไม่มี token ให้หาจาก Facebook platform
     if (!accessToken) {
@@ -309,11 +330,11 @@ export class IntegrationsService {
         accessToken,
         isActive: true,
         credentials: igInfo ? {
+          instagramAccountId: accountId, // ✅ ใช้ชื่อนี้เพื่อให้ตรงกับ messaging service
           username: igInfo.username,
           name: igInfo.name,
           profilePicture: igInfo.profile_picture_url,
-          accountId: accountId,
-        } : undefined,
+        } : { instagramAccountId: accountId },
       },
       create: {
         organizationId,
@@ -322,11 +343,11 @@ export class IntegrationsService {
         accessToken,
         isActive: true,
         credentials: igInfo ? {
+          instagramAccountId: accountId, // ✅ ใช้ชื่อนี้เพื่อให้ตรงกับ messaging service
           username: igInfo.username,
           name: igInfo.name,
           profilePicture: igInfo.profile_picture_url,
-          accountId: accountId,
-        } : { accountId },
+        } : { instagramAccountId: accountId },
       },
     });
 
@@ -337,7 +358,7 @@ export class IntegrationsService {
   }
 
   async disconnectInstagramAccount(organizationId: string, accountId: string) {
-    this.logger.log(`Disconnecting Instagram account: ${accountId}`);
+    this.logger.log(`🔌 Disconnecting Instagram account: ${accountId} from org: ${organizationId}`);
 
     const platform = await this.prisma.platform.findFirst({
       where: {
@@ -348,6 +369,7 @@ export class IntegrationsService {
     });
 
     if (!platform) {
+      this.logger.warn(`⚠️ Platform not found: ${accountId} in org: ${organizationId}`);
       throw new NotFoundException('Platform not found');
     }
 
@@ -394,11 +416,49 @@ export class IntegrationsService {
   async connectWhatsAppNumber(organizationId: string, numberId: string) {
     this.logger.log(`Connecting WhatsApp number: ${numberId}`);
 
-    // WhatsApp Business API requires manual setup
-    // This is a placeholder for future implementation
-    throw new BadRequestException(
-      'WhatsApp connection requires manual setup. Please contact support.',
-    );
+    // WhatsApp จะถูก connect ผ่าน OAuth flow แล้วส่ง credentials มา
+    // ที่นี่แค่ activate platform ที่มีอยู่แล้ว
+    const existingPlatform = await this.prisma.platform.findFirst({
+      where: {
+        organizationId,
+        type: 'whatsapp',
+        pageId: numberId,
+      },
+    });
+
+    if (existingPlatform) {
+      // Activate existing platform
+      const platform = await this.prisma.platform.update({
+        where: { id: existingPlatform.id },
+        data: { isActive: true },
+      });
+
+      return {
+        success: true,
+        platform,
+      };
+    }
+
+    // ถ้ายังไม่มี ให้สร้างใหม่ (placeholder)
+    const platform = await this.prisma.platform.create({
+      data: {
+        organizationId,
+        type: 'whatsapp',
+        pageId: numberId,
+        accessToken: '', // จะต้องมาจาก OAuth
+        isActive: true,
+        credentials: {
+          phoneNumberId: numberId,
+          displayName: 'WhatsApp Business',
+        },
+      },
+    });
+
+    return {
+      success: true,
+      platform,
+      message: 'WhatsApp number connected. Please configure credentials in settings.',
+    };
   }
 
   async disconnectWhatsAppNumber(organizationId: string, numberId: string) {

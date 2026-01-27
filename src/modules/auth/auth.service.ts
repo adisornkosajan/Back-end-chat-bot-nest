@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Logger, ConflictException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -16,6 +16,103 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
   ) {}
+
+  async register(data: {
+    email: string;
+    password: string;
+    name: string;
+    organizationName: string;
+  }) {
+    this.logger.debug(`Registering new user: ${data.email} with org: ${data.organizationName}`);
+
+    // Validate input
+    if (!data.email || !data.password || !data.name || !data.organizationName) {
+      throw new BadRequestException('All fields are required');
+    }
+
+    if (data.password.length < 6) {
+      throw new BadRequestException('Password must be at least 6 characters');
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(data.email)) {
+      throw new BadRequestException('Invalid email format');
+    }
+
+    // Check if user already exists
+    const existingUser = await this.usersService.findByEmail(data.email);
+    if (existingUser) {
+      this.logger.warn(`⚠️ Email already registered: ${data.email}`);
+      throw new ConflictException('Email already registered');
+    }
+
+    // Check if organization name already exists
+    // Note: MySQL comparison is case-insensitive by default for VARCHAR columns
+    const existingOrg = await this.prisma.organization.findFirst({
+      where: {
+        name: data.organizationName,
+      },
+    });
+
+    if (existingOrg) {
+      this.logger.warn(`⚠️ Organization name already exists: ${data.organizationName}`);
+      throw new ConflictException('Organization name already exists. Please choose a different name.');
+    }
+
+    // Hash password
+    const passwordHash = await bcrypt.hash(data.password, 10);
+
+    // Create organization and user in transaction
+    const result = await this.prisma.$transaction(async (tx) => {
+      // Create organization
+      const organization = await tx.organization.create({
+        data: {
+          name: data.organizationName,
+        },
+      });
+
+      // Create user
+      const user = await tx.user.create({
+        data: {
+          email: data.email,
+          passwordHash,
+          name: data.name,
+          role: 'ADMIN',
+          organizationId: organization.id,
+        },
+      });
+
+      return { user, organization };
+    });
+
+    this.logger.log(`✅ User registered: ${result.user.id}, Org: ${result.organization.id}`);
+    this.logger.debug(`📋 User Details - Email: ${result.user.email}, OrgId: ${result.user.organizationId}`);
+
+    // Generate JWT token
+    const payload = {
+      sub: result.user.id,
+      organizationId: result.user.organizationId,
+      role: result.user.role,
+    };
+
+    this.logger.debug(`🎟️ JWT Payload: userId=${payload.sub}, orgId=${payload.organizationId}, role=${payload.role}`);
+
+    return {
+      accessToken: this.jwtService.sign(payload),
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        name: result.user.name,
+        role: result.user.role,
+        organizationId: result.user.organizationId,
+      },
+      organization: {
+        id: result.organization.id,
+        name: result.organization.name,
+      },
+    };
+  }
 
   async validateUser(email: string, password: string) {
     this.logger.debug(`Validating user: ${email}`);
@@ -36,14 +133,25 @@ export class AuthService {
   }
 
   async login(user: any) {
+    this.logger.debug(`🔐 Creating JWT for user: ${user.id}, org: ${user.organizationId}`);
+    
     const payload = {
       sub: user.id,
       organizationId: user.organizationId,
       role: user.role,
     };
 
+    this.logger.debug(`🎟️ JWT Payload: userId=${payload.sub}, orgId=${payload.organizationId}, role=${payload.role}`);
+
     return {
       accessToken: this.jwtService.sign(payload),
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        organizationId: user.organizationId,
+      },
     };
   }
 
@@ -120,6 +228,18 @@ export class AuthService {
       // Parse state to get organizationId (format: "orgId:timestamp" หรือแค่ "orgId")
       const organizationId = state.split(':')[0];
 
+      // 🔒 CRITICAL: Validate organizationId exists
+      const organization = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+      });
+
+      if (!organization) {
+        this.logger.error(`❌ Invalid organizationId in state: ${organizationId}`);
+        throw new UnauthorizedException('Invalid organization ID');
+      }
+
+      this.logger.log(`✅ Connecting platforms to org: ${organization.name} (${organizationId})`);
+
       // Save platforms to database
       const savedPlatforms: any[] = [];
       for (const page of pages) {
@@ -134,12 +254,20 @@ export class AuthService {
           },
           update: {
             accessToken: page.access_token,
+            credentials: {
+              pageId: page.id,
+              pageName: page.name,
+            },
           },
           create: {
             organizationId,
             type: 'facebook',
             pageId: page.id,
             accessToken: page.access_token,
+            credentials: {
+              pageId: page.id,
+              pageName: page.name,
+            },
           },
         });
         savedPlatforms.push(fbPlatform);
@@ -157,12 +285,24 @@ export class AuthService {
             },
             update: {
               accessToken: page.access_token, // ใช้ page token เหมือนกัน
+              credentials: {
+                instagramAccountId: igAccount.id,
+                username: igAccount.username,
+                name: igAccount.name,
+                profilePicture: igAccount.profile_picture_url,
+              },
             },
             create: {
               organizationId,
               type: 'instagram',
               pageId: igAccount.id,
               accessToken: page.access_token,
+              credentials: {
+                instagramAccountId: igAccount.id,
+                username: igAccount.username,
+                name: igAccount.name,
+                profilePicture: igAccount.profile_picture_url,
+              },
             },
           });
           savedPlatforms.push(igPlatform);

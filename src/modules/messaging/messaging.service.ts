@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { AiService } from '../ai/ai.service';
 import axios from 'axios';
 
 @Injectable()
@@ -11,6 +12,7 @@ export class MessagingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeGateway,
+    private readonly aiService: AiService,
   ) {}
 
   async processInbound(data: {
@@ -166,6 +168,14 @@ export class MessagingService {
       platform.organizationId,
       conversation.id,
       message,
+    );
+
+    // 🤖 AI Auto-Reply: ตอบกลับอัตโนมัติด้วย AI
+    await this.sendAiAutoReply(
+      platform,
+      conversation,
+      customer,
+      data.content,
     );
   }
   async getConversations(organizationId: string) {
@@ -407,13 +417,28 @@ export class MessagingService {
               });
 
               if (!messageExists && fbMsg.message) {
+                // แปลง message เป็น string และตัดให้สั้นลงถ้ายาวเกินไป
+                let messageContent = '';
+                if (typeof fbMsg.message === 'string') {
+                  messageContent = fbMsg.message;
+                } else if (typeof fbMsg.message === 'object' && fbMsg.message.text) {
+                  messageContent = fbMsg.message.text;
+                } else {
+                  messageContent = JSON.stringify(fbMsg.message);
+                }
+                
+                // ตัดข้อความถ้ายาวเกิน 60000 characters (ปลอดภัยสำหรับ TEXT)
+                if (messageContent.length > 60000) {
+                  messageContent = messageContent.substring(0, 60000) + '... (truncated)';
+                }
+
                 await this.prisma.message.create({
                   data: {
                     organizationId,
                     conversationId: conversation.id,
                     platformMessageId: fbMsg.id,
                     senderType: fbMsg.from.id === pageId ? 'agent' : 'customer',
-                    content: fbMsg.message,
+                    content: messageContent,
                     contentType: 'text',
                     rawPayload: fbMsg,
                     sentAt: new Date(fbMsg.created_time),
@@ -446,8 +471,19 @@ export class MessagingService {
         success: true,
         synced: syncedCount,
       };
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error('❌ Facebook sync error:', error.response?.data || error.message);
+      
+      // ถ้าเป็น OAuth error (code 190) ให้ deactivate platform
+      if (error.response?.data?.error?.code === 190) {
+        this.logger.warn(`🔒 Deactivating platform ${platformId} due to invalid/expired token`);
+        await this.prisma.platform.update({
+          where: { id: platformId },
+          data: { isActive: false },
+        });
+        throw new Error('Platform token expired. Please reconnect your Facebook page.');
+      }
+      
       throw new Error('Failed to sync Facebook messages');
     }
   }
@@ -498,5 +534,146 @@ export class MessagingService {
         status: 'pending',
       },
     });
+  }
+
+  /**
+   * ส่งคำตอบอัตโนมัติจาก AI เมื่อลูกค้าส่งข้อความเข้ามา
+   */
+  private async sendAiAutoReply(
+    platform: any,
+    conversation: any,
+    customer: any,
+    customerMessage: string,
+  ) {
+    try {
+      this.logger.log(`🤖 Generating AI auto-reply for conversation: ${conversation.id}`);
+
+      // เรียก AI API เพื่อรับคำตอบ
+      const aiResponse = await this.aiService.getAiResponse(
+        customerMessage,
+        conversation.id,
+        customer.id,
+      );
+
+      // ส่งคำตอบกลับไปยัง platform (Facebook/Instagram/WhatsApp)
+      if (platform.type === 'facebook') {
+        await this.sendFacebookMessage(platform, customer.externalId, aiResponse);
+      } else if (platform.type === 'instagram') {
+        await this.sendInstagramMessage(platform, customer.externalId, aiResponse);
+      } else if (platform.type === 'whatsapp') {
+        await this.sendWhatsAppMessage(platform, customer.externalId, aiResponse);
+      }
+
+      // บันทึกข้อความ AI ลงในฐานข้อมูล
+      const aiMessage = await this.prisma.message.create({
+        data: {
+          organizationId: platform.organizationId,
+          conversationId: conversation.id,
+          senderType: 'agent',
+          content: aiResponse,
+          contentType: 'text',
+        },
+      });
+
+      // อัปเดตเวลาข้อความล่าสุดของ conversation
+      await this.prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { lastMessageAt: new Date() },
+      });
+
+      // ส่ง realtime notification ไปยัง dashboard
+      this.realtime.emitNewMessage(
+        platform.organizationId,
+        conversation.id,
+        aiMessage,
+      );
+
+      this.logger.log(`✅ AI auto-reply sent successfully`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to send AI auto-reply: ${error.message}`);
+    }
+  }
+
+  /**
+   * ส่งข้อความผ่าน Facebook Messenger
+   */
+  private async sendFacebookMessage(
+    platform: any,
+    recipientId: string,
+    message: string,
+  ) {
+    const pageToken = platform.accessToken;
+    if (!pageToken) {
+      throw new Error('Facebook access token not found');
+    }
+
+    await axios.post(
+      'https://graph.facebook.com/v19.0/me/messages',
+      {
+        recipient: { id: recipientId },
+        message: { text: message },
+      },
+      {
+        params: { access_token: pageToken },
+      },
+    );
+  }
+
+  /**
+   * ส่งข้อความผ่าน Instagram Direct
+   */
+  private async sendInstagramMessage(
+    platform: any,
+    recipientId: string,
+    message: string,
+  ) {
+    const pageToken = platform.accessToken;
+    if (!pageToken) {
+      throw new Error('Instagram access token not found');
+    }
+
+    await axios.post(
+      'https://graph.facebook.com/v19.0/me/messages',
+      {
+        recipient: { id: recipientId },
+        message: { text: message },
+      },
+      {
+        params: { access_token: pageToken },
+      },
+    );
+  }
+
+  /**
+   * ส่งข้อความผ่าน WhatsApp Business API
+   */
+  private async sendWhatsAppMessage(
+    platform: any,
+    recipientPhone: string,
+    message: string,
+  ) {
+    const credentials = platform.credentials as any;
+    const phoneNumberId = credentials?.phoneNumberId;
+    const accessToken = platform.accessToken;
+
+    if (!phoneNumberId || !accessToken) {
+      throw new Error('WhatsApp credentials not found');
+    }
+
+    await axios.post(
+      `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: recipientPhone,
+        type: 'text',
+        text: { body: message },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
   }
 }

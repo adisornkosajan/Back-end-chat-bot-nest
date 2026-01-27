@@ -15,6 +15,7 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { MessagingModule } from './modules/messaging/messaging.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { WebhookModule } from './modules/webhooks/webhook.module';
+import { AiModule } from './modules/ai/ai.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { WebhookModule } from './modules/webhooks/webhook.module';
     MessagingModule,
     RealtimeModule,
     WebhookModule,
+    AiModule,
   ],
 })
 export class AppModule {}

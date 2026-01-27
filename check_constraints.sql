@@ -1,0 +1,12 @@
+-- ตรวจสอบ constraints ที่มีอยู่
+SELECT 
+    CONSTRAINT_NAME,
+    CONSTRAINT_TYPE,
+    TABLE_NAME
+FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+WHERE TABLE_SCHEMA = 'omni2' 
+  AND TABLE_NAME = 'platforms'
+  AND CONSTRAINT_TYPE = 'UNIQUE';
+
+-- ดู indexes
+SHOW INDEX FROM omni2.platforms;
