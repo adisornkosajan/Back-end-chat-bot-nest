@@ -231,10 +231,6 @@ export class MessagingService {
       throw new Error('Conversation assigned to another agent');
     }
 
-    if (conversation.platform.type !== 'facebook') {
-      throw new Error('Platform not supported yet');
-    }
-
     // Get accessToken directly from platform (not from credentials JSON)
     const pageToken = conversation.platform.accessToken;
     if (!pageToken) {
@@ -243,22 +239,55 @@ export class MessagingService {
     }
 
     const recipientId = conversation.customer.externalId;
+    const platformType = conversation.platform.type;
 
-    // 1️⃣ ส่งไป Facebook จริง
+    // 1️⃣ ส่งไปยัง Platform
     try {
-      await axios.post(
-        'https://graph.facebook.com/v19.0/me/messages',
-        {
-          recipient: { id: recipientId },
-          message: { text: content },
-        },
-        {
-          params: { access_token: pageToken },
-        },
-      );
+      if (platformType === 'facebook') {
+        await axios.post(
+          'https://graph.facebook.com/v19.0/me/messages',
+          {
+            recipient: { id: recipientId },
+            message: { text: content },
+          },
+          {
+            params: { access_token: pageToken },
+          },
+        );
+      } else if (platformType === 'instagram') {
+        await axios.post(
+          'https://graph.facebook.com/v19.0/me/messages',
+          {
+            recipient: { id: recipientId },
+            message: { text: content },
+          },
+          {
+            params: { access_token: pageToken },
+          },
+        );
+      } else if (platformType === 'whatsapp') {
+        const phoneNumberId = conversation.platform.pageId; // pageId stores phoneNumberId for WhatsApp
+        await axios.post(
+          `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
+          {
+            messaging_product: 'whatsapp',
+            to: recipientId,
+            type: 'text',
+            text: { body: content },
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${pageToken}`,
+              'Content-Type': 'application/json',
+            },
+          },
+        );
+      } else {
+        throw new Error(`Platform ${platformType} not supported yet`);
+      }
     } catch (err: any) {
-      console.error('❌ Facebook Send Error');
-      console.error(err.response?.data || err.message);
+      this.logger.error(`❌ ${platformType.toUpperCase()} Send Error`);
+      this.logger.error(err.response?.data || err.message);
       throw err;
     }
 

@@ -50,12 +50,19 @@ export class WebhookController {
     @Query('hub.challenge') challenge: string,
     @Res() res: Response,
   ) {
+    this.logger.log(`🔍 WhatsApp webhook verification attempt:`);
+    this.logger.log(`   Mode: ${mode}`);
+    this.logger.log(`   Token received: ${token}`);
+    this.logger.log(`   Expected token: ${process.env.META_WEBHOOK_VERIFY_TOKEN}`);
+    this.logger.log(`   Challenge: ${challenge}`);
+
     if (mode === 'subscribe' && token === process.env.META_WEBHOOK_VERIFY_TOKEN) {
       this.logger.log('✅ WhatsApp webhook verified');
       return res.status(HttpStatus.OK).send(challenge);
     }
 
     this.logger.warn('❌ WhatsApp webhook verification failed');
+    this.logger.warn(`   Reason: mode=${mode} (expected: subscribe), token match: ${token === process.env.META_WEBHOOK_VERIFY_TOKEN}`);
     return res.sendStatus(HttpStatus.FORBIDDEN);
   }
 

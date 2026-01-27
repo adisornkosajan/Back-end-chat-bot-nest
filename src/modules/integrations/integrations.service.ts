@@ -486,4 +486,91 @@ export class IntegrationsService {
       message: 'WhatsApp number disconnected',
     };
   }
+
+  /**
+   * เพิ่ม WhatsApp แบบ Manual Configuration (สำหรับ Test Mode)
+   */
+  async addWhatsAppManual(
+    organizationId: string,
+    data: {
+      phoneNumberId: string;
+      accessToken: string;
+      displayName?: string;
+      phoneNumber?: string;
+      wabaId?: string;
+      verifiedName?: string;
+    },
+  ) {
+    this.logger.log(`📱 Adding WhatsApp manually for org: ${organizationId}`);
+
+    // Validate organization
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+
+    if (!organization) {
+      throw new NotFoundException('Organization not found');
+    }
+
+    // ตรวจสอบว่ามี WhatsApp number นี้อยู่แล้วหรือไม่
+    const existing = await this.prisma.platform.findFirst({
+      where: {
+        organizationId,
+        type: 'whatsapp',
+        pageId: data.phoneNumberId,
+      },
+    });
+
+    if (existing) {
+      // Update existing
+      this.logger.log(`Updating existing WhatsApp platform: ${existing.id}`);
+      const updated = await this.prisma.platform.update({
+        where: { id: existing.id },
+        data: {
+          accessToken: data.accessToken,
+          isActive: true,
+          credentials: {
+            phoneNumberId: data.phoneNumberId,
+            displayName: data.displayName || 'WhatsApp Business',
+            phoneNumber: data.phoneNumber,
+            wabaId: data.wabaId,
+            verifiedName: data.verifiedName,
+          },
+        },
+      });
+
+      return {
+        success: true,
+        platform: updated,
+        message: 'WhatsApp platform updated successfully',
+      };
+    }
+
+    // สร้างใหม่
+    this.logger.log(`Creating new WhatsApp platform with Phone Number ID: ${data.phoneNumberId}`);
+    const platform = await this.prisma.platform.create({
+      data: {
+        organizationId,
+        type: 'whatsapp',
+        pageId: data.phoneNumberId,
+        accessToken: data.accessToken,
+        isActive: true,
+        credentials: {
+          phoneNumberId: data.phoneNumberId,
+          displayName: data.displayName || 'WhatsApp Business',
+          phoneNumber: data.phoneNumber,
+          wabaId: data.wabaId,
+          verifiedName: data.verifiedName,
+        },
+      },
+    });
+
+    this.logger.log(`✅ WhatsApp platform created: ${platform.id}`);
+
+    return {
+      success: true,
+      platform,
+      message: 'WhatsApp connected successfully! You can now receive messages.',
+    };
+  }
 }

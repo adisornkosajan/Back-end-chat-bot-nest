@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, UseGuards, Req, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, UseGuards, Req, Logger } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { IntegrationsService } from './integrations.service';
 
@@ -81,6 +81,25 @@ export class IntegrationsController {
     return this.integrationsService.disconnectWhatsAppNumber(
       req.user.organizationId,
       numberId,
+    );
+  }
+
+  @Post('whatsapp/manual')
+  async addWhatsAppManual(
+    @Req() req: any,
+    @Body() body: {
+      phoneNumberId: string;
+      accessToken: string;
+      displayName?: string;
+      phoneNumber?: string;
+      wabaId?: string;
+      verifiedName?: string;
+    },
+  ) {
+    this.logger.log(`📱 Manual WhatsApp configuration for org: ${req.user.organizationId}`);
+    return this.integrationsService.addWhatsAppManual(
+      req.user.organizationId,
+      body,
     );
   }
 }
