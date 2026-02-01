@@ -76,8 +76,16 @@ export class RealtimeGateway
     try {
       const payload = this.jwtService.verify(token);
       client.data.user = payload;
-      client.join(`org:${payload.organizationId}`);
+      const roomName = `org:${payload.organizationId}`;
+      client.join(roomName);
+      
       console.log('✅ Client connected:', client.id, 'Org:', payload.organizationId);
+      console.log('🚪 Client joined room:', roomName);
+      console.log('👤 User ID:', payload.sub);
+      console.log('🎭 User Role:', payload.role);
+      
+      // Show all rooms this socket is in
+      console.log('📍 Socket rooms:', Array.from(client.rooms));
     } catch (error) {
       console.log('❌ Token verification failed:', error.message);
       client.disconnect();
@@ -96,15 +104,37 @@ export class RealtimeGateway
     console.log('Room:', `org:${orgId}`);
     console.log('Conversation ID:', conversationId);
     console.log('Message ID:', payload.id);
+    
+    // 🔍 Debug: Show all connected clients and their rooms (with null checks)
+    if (this.server && this.server.sockets && this.server.sockets.adapter) {
+      const room = this.server.sockets.adapter.rooms.get(`org:${orgId}`);
+      console.log(`👥 Clients in room org:${orgId}:`, room ? room.size : 0);
+      
+      if (room) {
+        console.log('📋 Socket IDs in room:', Array.from(room));
+      }
+      
+      // Show all connected sockets
+      const allSockets = Array.from(this.server.sockets.sockets.keys());
+      console.log('🌐 Total connected sockets:', allSockets.length);
+      console.log('📌 All socket IDs:', allSockets);
+    } else {
+      console.log('⚠️ Socket.IO server not fully initialized yet');
+    }
+    
     console.log('═══════════════════════════════════════');
     
-    this.server
-      .to(`org:${orgId}`)
-      .emit('message:new', {
-        conversationId,
-        message: payload,
-      });
-    
-    console.log('✅ Event emitted successfully');
+    if (this.server) {
+      this.server
+        .to(`org:${orgId}`)
+        .emit('message:new', {
+          conversationId,
+          message: payload,
+        });
+      
+      console.log('✅ Event emitted successfully');
+    } else {
+      console.log('❌ Cannot emit: Socket.IO server not available');
+    }
   }
 }

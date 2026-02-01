@@ -34,6 +34,7 @@ model Organization {
   customers     Customer[]
   conversations Conversation[]
   messages      Message[]
+  invitations   Invitation[]
 
   @@map("organizations")
 }
@@ -112,4 +113,23 @@ model Message {
   updatedAt         DateTime     @updatedAt
 
   @@map("messages")
+}
+
+model Invitation {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String
+  token          String       @unique
+  role           String       @default("user") // user, ADMIN
+  invitedBy      String       // User ID who sent the invitation
+  status         String       @default("pending") // pending, accepted, expired, revoked
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([token])
+  @@index([email])
+  @@map("invitations")
 }

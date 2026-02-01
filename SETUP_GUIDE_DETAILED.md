@@ -24,7 +24,7 @@
 1. ไปที่: https://developers.facebook.com/apps
 2. คลิก **"Create App"**
 3. เลือก App Type: **"Business"**
-4. ตั้งชื่อ App: เช่น "OmniChat SaaS"
+4. ตั้งชื่อ App: เช่น "Talk-V AI"
 5. เลือก Business Account ของคุณ
 
 ---
@@ -45,7 +45,7 @@
 
 **B. สร้าง/เลือก WhatsApp Business Account**
 - คลิก **"Create new WhatsApp Business Account"**
-- ตั้งชื่อ: เช่น "OmniChat Business"
+- ตั้งชื่อ: เช่น "Talk-V AI Business"
 - เลือก Timezone
 
 **C. เพิ่มเบอร์โทรศัพท์**

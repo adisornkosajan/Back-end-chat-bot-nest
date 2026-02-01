@@ -35,38 +35,16 @@ export class MessagingService {
     // - Instagram: Instagram Account ID ที่รับข้อความ
     // - WhatsApp: Phone Number ID ที่รับข้อความ
     
-    // ค้นหา platforms ของ type นี้ทั้งหมด แล้ว filter ใน memory
-    const platforms = await this.prisma.platform.findMany({
-      where: { type: data.platform },
-    });
-
-    // หา platform ที่มี recipientId ตรงกับที่รับมา
-    const platform = platforms.find((p) => {
-      const creds = p.credentials as any;
-      if (!creds) return false;
-
-      // Facebook: เช็ค pageId
-      if (data.platform === 'facebook' && creds.pageId === data.recipientId) {
-        return true;
-      }
-
-      // Instagram: เช็ค instagramAccountId
-      if (
-        data.platform === 'instagram' &&
-        creds.instagramAccountId === data.recipientId
-      ) {
-        return true;
-      }
-
-      // WhatsApp: เช็ค phoneNumberId
-      if (
-        data.platform === 'whatsapp' &&
-        creds.phoneNumberId === data.recipientId
-      ) {
-        return true;
-      }
-
-      return false;
+    // ✅ FIX: ใช้ pageId ใน query โดยตรงเพื่อให้ได้ platform ที่ถูกต้อง
+    const platform = await this.prisma.platform.findFirst({
+      where: {
+        type: data.platform,
+        pageId: data.recipientId,
+        isActive: true,
+      },
+      orderBy: {
+        createdAt: 'desc', // ถ้ามีหลายตัว (ไม่ควรเกิด) เอาตัวล่าสุด
+      },
     });
 
     if (!platform) {
@@ -178,9 +156,32 @@ export class MessagingService {
       data.content,
     );
   }
-  async getConversations(organizationId: string) {
+  async getConversations(
+    organizationId: string,
+    assignedTo?: string,
+    status?: string,
+  ) {
+    const where: any = { organizationId };
+
+    // Filter by assigned agent
+    if (assignedTo) {
+      if (assignedTo === 'unassigned') {
+        where.assignedAgentId = null;
+      } else if (assignedTo === 'me') {
+        // ต้องส่ง user ID จาก frontend
+        where.assignedAgentId = assignedTo;
+      } else {
+        where.assignedAgentId = assignedTo;
+      }
+    }
+
+    // Filter by status
+    if (status) {
+      where.status = status;
+    }
+
     return this.prisma.conversation.findMany({
-      where: { organizationId },
+      where,
       include: {
         customer: true,
         platform: true,
@@ -224,12 +225,19 @@ export class MessagingService {
       throw new Error('Conversation not found');
     }
 
-    if (
-      conversation.assignedAgentId &&
-      conversation.assignedAgentId !== agentId
-    ) {
-      throw new Error('Conversation assigned to another agent');
+    // Auto-assign conversation to agent if not assigned yet
+    if (!conversation.assignedAgentId) {
+      this.logger.log(`🎯 Auto-assigning conversation ${conversationId} to agent ${agentId}`);
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { 
+          assignedAgentId: agentId,
+          status: 'pending',
+        },
+      });
     }
+    // Allow team collaboration - any team member can reply
+    // No need to restrict to assigned agent only
 
     // Get accessToken directly from platform (not from credentials JSON)
     const pageToken = conversation.platform.accessToken;
@@ -550,9 +558,37 @@ export class MessagingService {
 
   async assignConversation(
     orgId: string,
-    agentId: string,
+    agentId: string | null,
     conversationId: string,
   ) {
+    this.logger.log(`📌 Assigning conversation ${conversationId} to agent: ${agentId || 'unassign'}`);
+
+    // ถ้า agentId เป็น null แสดงว่าต้องการ unassign
+    if (agentId === null) {
+      return this.prisma.conversation.update({
+        where: {
+          id: conversationId,
+          organizationId: orgId,
+        },
+        data: {
+          assignedAgentId: null,
+          status: 'open',
+        },
+      });
+    }
+
+    // Validate agent exists in organization
+    const agent = await this.prisma.user.findFirst({
+      where: {
+        id: agentId,
+        organizationId: orgId,
+      },
+    });
+
+    if (!agent) {
+      throw new Error('Agent not found in organization');
+    }
+
     return this.prisma.conversation.update({
       where: {
         id: conversationId,

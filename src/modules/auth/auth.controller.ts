@@ -19,6 +19,9 @@ export class AuthController {
     },
   ) {
     this.logger.log(`📝 Registration attempt for email: ${body.email}`);
+    this.logger.debug(`📦 Request body received:`, JSON.stringify(body, null, 2));
+    this.logger.debug(`📊 Field check - email: "${body.email}", password: ${body.password ? 'exists' : 'missing'}, name: "${body.name}", org: "${body.organizationName}"`);
+    
     try {
       const result = await this.authService.register(body);
       this.logger.log(`✅ Registration successful for user: ${result.user.id}`);
@@ -86,6 +89,46 @@ export class AuthController {
       // Redirect กลับไปพร้อม error message
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       res.redirect(`${frontendUrl}/dashboard/connections?oauth=error&message=${encodeURIComponent(error.message)}`);
+    }
+  }
+
+  /**
+   * GET /api/auth/invitation/:token
+   * Get invitation details (for preview page)
+   */
+  @Get('invitation/:token')
+  async getInvitation(@Query('token') token: string) {
+    this.logger.log(`📬 Getting invitation details for token`);
+    try {
+      const invitation = await this.authService.getInvitation(token);
+      this.logger.log(`✅ Invitation found for email: ${invitation.email}`);
+      return invitation;
+    } catch (error) {
+      this.logger.error(`❌ Failed to get invitation:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * POST /api/auth/accept-invite
+   * Accept invitation and create account
+   */
+  @Post('accept-invite')
+  async acceptInvite(
+    @Body() body: {
+      token: string;
+      name: string;
+      password: string;
+    },
+  ) {
+    this.logger.log(`💌 Accepting invitation`);
+    try {
+      const result = await this.authService.acceptInvitation(body);
+      this.logger.log(`✅ Invitation accepted, user created: ${result.user.id}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`❌ Failed to accept invitation:`, error.message);
+      throw error;
     }
   }
 }

@@ -6,7 +6,7 @@ import { ConfigService } from '@nestjs/config';
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
   
-  logger.log('🚀 Starting Omni Chat SaaS Backend...');
+  logger.log('🚀 Starting Talk-V AI Backend...');
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
 

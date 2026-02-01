@@ -117,6 +117,32 @@ export class IntegrationsService {
         throw new NotFoundException('Page not found');
       }
 
+      // 🔒 CRITICAL: ตรวจสอบว่า Page ID นี้ถูกใช้โดย organization อื่นแล้วหรือยัง
+      const existingPlatform = await this.prisma.platform.findFirst({
+        where: {
+          type: 'facebook',
+          pageId,
+          organizationId: { not: organizationId },
+          isActive: true,
+        },
+        include: {
+          organization: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      });
+
+      if (existingPlatform) {
+        this.logger.error(`❌ Page ID ${pageId} is already connected to organization: ${existingPlatform.organization.name}`);
+        throw new BadRequestException(
+          `This Facebook Page is already connected to another organization (${existingPlatform.organization.name}). ` +
+          `Each page can only be connected to one organization at a time. ` +
+          `Please disconnect it from the other organization first.`
+        );
+      }
+
       // Save/Update platform with page details
       const platform = await this.prisma.platform.upsert({
         where: {
@@ -318,6 +344,32 @@ export class IntegrationsService {
       }
     }
 
+    // 🔒 CRITICAL: ตรวจสอบว่า Instagram account นี้ถูกใช้โดย organization อื่นแล้วหรือยัง
+    const existingPlatform = await this.prisma.platform.findFirst({
+      where: {
+        type: 'instagram',
+        pageId: accountId,
+        organizationId: { not: organizationId },
+        isActive: true,
+      },
+      include: {
+        organization: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (existingPlatform) {
+      this.logger.error(`❌ Instagram account ${accountId} is already connected to organization: ${existingPlatform.organization.name}`);
+      throw new BadRequestException(
+        `This Instagram account is already connected to another organization (${existingPlatform.organization.name}). ` +
+        `Each account can only be connected to one organization at a time. ` +
+        `Please disconnect it from the other organization first.`
+      );
+    }
+
     const platform = await this.prisma.platform.upsert({
       where: {
         organizationId_type_pageId: {
@@ -388,6 +440,7 @@ export class IntegrationsService {
   async getWhatsAppNumbers(organizationId: string) {
     this.logger.debug(`Getting WhatsApp numbers for org: ${organizationId}`);
 
+    // 1. ดึง WhatsApp platforms ที่มีใน database
     const waPlatforms = await this.prisma.platform.findMany({
       where: {
         organizationId,
@@ -397,17 +450,94 @@ export class IntegrationsService {
         id: true,
         pageId: true,
         isActive: true,
+        accessToken: true,
         credentials: true,
         createdAt: true,
       },
     });
 
-    // WhatsApp ต้องใช้ WhatsApp Business API
-    // ที่นี่จะ return platforms ที่มีอยู่แล้ว
+    // 2. ถ้ามี access token ให้ลองดึงจาก Meta API
+    if (waPlatforms.length > 0 && waPlatforms[0].accessToken) {
+      try {
+        const accessToken = waPlatforms[0].accessToken;
+        
+        // ดึง WhatsApp Business Accounts ที่ user มีสิทธิ์เข้าถึง
+        const response = await axios.get(
+          'https://graph.facebook.com/v19.0/me/businesses',
+          {
+            params: {
+              access_token: accessToken,
+              fields: 'id,name,owned_whatsapp_business_accounts{id,name,timezone_id,message_template_namespace}',
+            },
+          },
+        );
+
+        const businesses = response.data.data || [];
+        const wabaList: any[] = [];
+
+        // รวบรวม WABA จากทุก business
+        businesses.forEach((business: any) => {
+          const wabas = business.owned_whatsapp_business_accounts?.data || [];
+          wabas.forEach((waba: any) => {
+            wabaList.push({
+              wabaId: waba.id,
+              wabaName: waba.name,
+              businessId: business.id,
+              businessName: business.name,
+            });
+          });
+        });
+
+        // ดึง phone numbers จากแต่ละ WABA
+        const numbersPromises = wabaList.map(async (waba) => {
+          try {
+            const phoneResponse = await axios.get(
+              `https://graph.facebook.com/v19.0/${waba.wabaId}/phone_numbers`,
+              {
+                params: {
+                  access_token: accessToken,
+                  fields: 'id,display_phone_number,verified_name,quality_rating,code_verification_status',
+                },
+              },
+            );
+
+            return (phoneResponse.data.data || []).map((phone: any) => {
+              const existingPlatform = waPlatforms.find(p => p.pageId === phone.id);
+              return {
+                id: phone.id,
+                phoneNumber: phone.display_phone_number,
+                displayName: phone.verified_name,
+                wabaId: waba.wabaId,
+                wabaName: waba.wabaName,
+                qualityRating: phone.quality_rating,
+                verificationStatus: phone.code_verification_status,
+                connected: !!existingPlatform && existingPlatform.isActive,
+                platformId: existingPlatform?.id,
+              };
+            });
+          } catch (error) {
+            this.logger.warn(`Failed to fetch phone numbers for WABA ${waba.wabaId}:`, error.message);
+            return [];
+          }
+        });
+
+        const allNumbers = (await Promise.all(numbersPromises)).flat();
+        
+        if (allNumbers.length > 0) {
+          return allNumbers;
+        }
+      } catch (error) {
+        this.logger.warn('Failed to fetch WhatsApp numbers from API:', error.response?.data || error.message);
+        // ถ้า API fail ให้ใช้ข้อมูลจาก database แทน
+      }
+    }
+
+    // 3. Fallback: ใช้ข้อมูลจาก database
     return waPlatforms.map((p) => ({
       id: p.pageId,
       phoneNumber: p.credentials?.['phoneNumber'] || p.pageId,
       displayName: p.credentials?.['displayName'] || 'WhatsApp Business',
+      wabaId: p.credentials?.['wabaId'],
       connected: p.isActive,
       platformId: p.id,
     }));
@@ -415,6 +545,32 @@ export class IntegrationsService {
 
   async connectWhatsAppNumber(organizationId: string, numberId: string) {
     this.logger.log(`Connecting WhatsApp number: ${numberId}`);
+
+    // 🔒 CRITICAL: ตรวจสอบว่า WhatsApp number นี้ถูกใช้โดย organization อื่นแล้วหรือยัง
+    const usedByOther = await this.prisma.platform.findFirst({
+      where: {
+        type: 'whatsapp',
+        pageId: numberId,
+        organizationId: { not: organizationId },
+        isActive: true,
+      },
+      include: {
+        organization: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (usedByOther) {
+      this.logger.error(`❌ WhatsApp number ${numberId} is already connected to organization: ${usedByOther.organization.name}`);
+      throw new BadRequestException(
+        `This WhatsApp number is already connected to another organization (${usedByOther.organization.name}). ` +
+        `Each number can only be connected to one organization at a time. ` +
+        `Please disconnect it from the other organization first.`
+      );
+    }
 
     // WhatsApp จะถูก connect ผ่าน OAuth flow แล้วส่ง credentials มา
     // ที่นี่แค่ activate platform ที่มีอยู่แล้ว
@@ -512,7 +668,33 @@ export class IntegrationsService {
       throw new NotFoundException('Organization not found');
     }
 
-    // ตรวจสอบว่ามี WhatsApp number นี้อยู่แล้วหรือไม่
+    // 🔒 CRITICAL: ตรวจสอบว่า WhatsApp number นี้ถูกใช้โดย organization อื่นแล้วหรือยัง
+    const usedByOther = await this.prisma.platform.findFirst({
+      where: {
+        type: 'whatsapp',
+        pageId: data.phoneNumberId,
+        organizationId: { not: organizationId },
+        isActive: true,
+      },
+      include: {
+        organization: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (usedByOther) {
+      this.logger.error(`❌ WhatsApp number ${data.phoneNumberId} is already connected to organization: ${usedByOther.organization.name}`);
+      throw new BadRequestException(
+        `This WhatsApp number is already connected to another organization (${usedByOther.organization.name}). ` +
+        `Each number can only be connected to one organization at a time. ` +
+        `Please disconnect it from the other organization first.`
+      );
+    }
+
+    // ตรวจสอบว่ามี WhatsApp number นี้อยู่แล้วหรือไม่ (ใน org เดียวกัน)
     const existing = await this.prisma.platform.findFirst({
       where: {
         organizationId,

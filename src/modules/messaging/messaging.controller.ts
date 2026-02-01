@@ -6,6 +6,7 @@ import {
   Req,
   Post,
   Body,
+  Query,
 } from '@nestjs/common';
 import { MessagingService } from './messaging.service';
 import { AuthGuard } from '@nestjs/passport';
@@ -15,17 +16,30 @@ import { AuthGuard } from '@nestjs/passport';
 export class MessagingController {
   constructor(private readonly messaging: MessagingService) {}
   @Post(':id/assign')
-  async assign(@Req() req: any, @Param('id') id: string) {
+  async assign(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { agentId: string | null },
+  ) {
+    const agentId = body.agentId || req.user.id; // ถ้าไม่ส่ง agentId มาให้ assign ให้ตัวเอง
     return this.messaging.assignConversation(
       req.user.organizationId,
-      req.user.id,
+      agentId,
       id,
     );
   }
 
   @Get()
-  async list(@Req() req: any) {
-    return this.messaging.getConversations(req.user.organizationId);
+  async list(
+    @Req() req: any,
+    @Query('assignedTo') assignedTo?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.messaging.getConversations(
+      req.user.organizationId,
+      assignedTo,
+      status,
+    );
   }
 
   @Get(':id/messages')

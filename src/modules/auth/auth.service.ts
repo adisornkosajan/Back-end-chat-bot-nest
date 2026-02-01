@@ -155,6 +155,146 @@ export class AuthService {
     };
   }
 
+  /**
+   * Accept invitation and create user account
+   */
+  async acceptInvitation(data: {
+    token: string;
+    name: string;
+    password: string;
+  }) {
+    this.logger.log(`💌 Accepting invitation with token`);
+
+    // Validate input
+    if (!data.token || !data.name || !data.password) {
+      throw new BadRequestException('Token, name, and password are required');
+    }
+
+    if (data.password.length < 6) {
+      throw new BadRequestException('Password must be at least 6 characters');
+    }
+
+    // Find invitation
+    const invitation = await this.prisma.invitation.findFirst({
+      where: {
+        token: data.token,
+        status: 'pending',
+      },
+      include: {
+        organization: true,
+      },
+    });
+
+    if (!invitation) {
+      throw new BadRequestException('Invalid or expired invitation');
+    }
+
+    // Check if invitation expired
+    if (new Date() > invitation.expiresAt) {
+      await this.prisma.invitation.update({
+        where: { id: invitation.id },
+        data: { status: 'expired' },
+      });
+      throw new BadRequestException('Invitation has expired');
+    }
+
+    // Check if user already exists
+    const existingUser = await this.usersService.findByEmail(invitation.email);
+    if (existingUser) {
+      throw new ConflictException('An account with this email already exists');
+    }
+
+    // Hash password
+    const passwordHash = await bcrypt.hash(data.password, 10);
+
+    // Create user and update invitation in transaction
+    const result = await this.prisma.$transaction(async (tx) => {
+      // Create user
+      const user = await tx.user.create({
+        data: {
+          email: invitation.email,
+          passwordHash,
+          name: data.name,
+          role: invitation.role,
+          organizationId: invitation.organizationId,
+        },
+      });
+
+      // Update invitation status
+      await tx.invitation.update({
+        where: { id: invitation.id },
+        data: {
+          status: 'accepted',
+          acceptedAt: new Date(),
+        },
+      });
+
+      return { user, organization: invitation.organization };
+    });
+
+    this.logger.log(`✅ User created from invitation: ${result.user.id}`);
+
+    // Generate JWT token
+    const payload = {
+      sub: result.user.id,
+      organizationId: result.user.organizationId,
+      role: result.user.role,
+    };
+
+    return {
+      accessToken: this.jwtService.sign(payload),
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        name: result.user.name,
+        role: result.user.role,
+        organizationId: result.user.organizationId,
+      },
+      organization: {
+        id: result.organization.id,
+        name: result.organization.name,
+      },
+    };
+  }
+
+  /**
+   * Get invitation details (for preview)
+   */
+  async getInvitation(token: string) {
+    const invitation = await this.prisma.invitation.findFirst({
+      where: {
+        token,
+        status: 'pending',
+      },
+      include: {
+        organization: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (!invitation) {
+      throw new BadRequestException('Invalid or expired invitation');
+    }
+
+    if (new Date() > invitation.expiresAt) {
+      await this.prisma.invitation.update({
+        where: { id: invitation.id },
+        data: { status: 'expired' },
+      });
+      throw new BadRequestException('Invitation has expired');
+    }
+
+    return {
+      email: invitation.email,
+      role: invitation.role,
+      organizationName: invitation.organization.name,
+      expiresAt: invitation.expiresAt,
+    };
+  }
+
   buildOAuthUrl(state: string) {
     const appId = this.configService.get('oauth.meta.appId');
     const redirectUri = this.configService.get('oauth.meta.redirectUri');
@@ -224,6 +364,61 @@ export class AuthService {
 
       const pages = accountsResponse.data.data || [];
       this.logger.debug(`📄 Found ${pages.length} pages/accounts`);
+
+      // Get WhatsApp Business Accounts
+      let whatsappAccounts: any[] = [];
+      try {
+        const businessesResponse = await axios.get(
+          'https://graph.facebook.com/v21.0/me/businesses',
+          {
+            params: {
+              access_token: longLivedToken,
+              fields: 'id,name,owned_whatsapp_business_accounts{id,name,timezone_id,message_template_namespace}',
+            },
+          },
+        );
+
+        const businesses = businessesResponse.data.data || [];
+        
+        // Collect all WABAs from all businesses
+        for (const business of businesses) {
+          const wabas = business.owned_whatsapp_business_accounts?.data || [];
+          for (const waba of wabas) {
+            // Get phone numbers for each WABA
+            try {
+              const phoneResponse = await axios.get(
+                `https://graph.facebook.com/v21.0/${waba.id}/phone_numbers`,
+                {
+                  params: {
+                    access_token: longLivedToken,
+                    fields: 'id,display_phone_number,verified_name,quality_rating,code_verification_status',
+                  },
+                },
+              );
+
+              const phoneNumbers = phoneResponse.data.data || [];
+              phoneNumbers.forEach((phone: any) => {
+                whatsappAccounts.push({
+                  wabaId: waba.id,
+                  wabaName: waba.name,
+                  phoneNumberId: phone.id,
+                  displayPhoneNumber: phone.display_phone_number,
+                  verifiedName: phone.verified_name,
+                  qualityRating: phone.quality_rating,
+                  businessId: business.id,
+                  businessName: business.name,
+                });
+              });
+            } catch (phoneError) {
+              this.logger.warn(`⚠️ Failed to get phone numbers for WABA ${waba.id}:`, phoneError.message);
+            }
+          }
+        }
+
+        this.logger.debug(`📱 Found ${whatsappAccounts.length} WhatsApp phone numbers`);
+      } catch (waError) {
+        this.logger.warn(`⚠️ Failed to get WhatsApp Business Accounts:`, waError.message);
+      }
 
       // Parse state to get organizationId (format: "orgId:timestamp" หรือแค่ "orgId")
       const organizationId = state.split(':')[0];
@@ -307,6 +502,49 @@ export class AuthService {
           });
           savedPlatforms.push(igPlatform);
         }
+      }
+
+      // Save WhatsApp Business Accounts
+      for (const waAccount of whatsappAccounts) {
+        const waPlatform = await this.prisma.platform.upsert({
+          where: {
+            organizationId_type_pageId: {
+              organizationId,
+              type: 'whatsapp',
+              pageId: waAccount.phoneNumberId,
+            },
+          },
+          update: {
+            accessToken: longLivedToken, // ใช้ long-lived token
+            credentials: {
+              phoneNumberId: waAccount.phoneNumberId,
+              displayPhoneNumber: waAccount.displayPhoneNumber,
+              verifiedName: waAccount.verifiedName,
+              wabaId: waAccount.wabaId,
+              wabaName: waAccount.wabaName,
+              businessId: waAccount.businessId,
+              businessName: waAccount.businessName,
+              qualityRating: waAccount.qualityRating,
+            },
+          },
+          create: {
+            organizationId,
+            type: 'whatsapp',
+            pageId: waAccount.phoneNumberId,
+            accessToken: longLivedToken,
+            credentials: {
+              phoneNumberId: waAccount.phoneNumberId,
+              displayPhoneNumber: waAccount.displayPhoneNumber,
+              verifiedName: waAccount.verifiedName,
+              wabaId: waAccount.wabaId,
+              wabaName: waAccount.wabaName,
+              businessId: waAccount.businessId,
+              businessName: waAccount.businessName,
+              qualityRating: waAccount.qualityRating,
+            },
+          },
+        });
+        savedPlatforms.push(waPlatform);
       }
 
       this.logger.debug(

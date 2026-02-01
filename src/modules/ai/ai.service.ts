@@ -49,7 +49,30 @@ export class AiService {
       
       return aiResponse;
     } catch (error: any) {
-      this.logger.error('❌ AI API Error:', error.response?.data || error.message);
+      // Log detailed error information
+      if (error.response) {
+        // The request was made and the server responded with a status code outside of 2xx
+        this.logger.error('❌ AI API Error Response:', {
+          status: error.response.status,
+          statusText: error.response.statusText,
+          data: error.response.data,
+          url: this.aiApiUrl,
+        });
+      } else if (error.request) {
+        // The request was made but no response was received
+        this.logger.error('❌ AI API No Response:', {
+          message: error.message,
+          code: error.code,
+          url: this.aiApiUrl,
+          error: 'AI service is not responding. Is it running?',
+        });
+      } else {
+        // Something happened in setting up the request
+        this.logger.error('❌ AI API Request Error:', {
+          message: error.message,
+          stack: error.stack,
+        });
+      }
       
       // กรณีเกิดข้อผิดพลาด ส่งข้อความสำรองกลับไป
       return 'ขออภัยค่ะ ระบบ AI มีปัญหาชั่วคราว กรุณารอสักครู่หรือติดต่อเจ้าหน้าที่ค่ะ';
