@@ -215,7 +215,7 @@ export class AuthService {
           email: invitation.email,
           passwordHash,
           name: data.name,
-          role: invitation.role,
+          role: invitation.role as any,
           organizationId: invitation.organizationId,
         },
       });

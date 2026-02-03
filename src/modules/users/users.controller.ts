@@ -1,9 +1,11 @@
 import { Controller, Get, Post, Put, Delete, Param, Body, UseGuards, Req } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { UsersService } from './users.service';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles, UserRole } from '../../common/decorators/roles.decorator';
 
 @Controller('users')
-@UseGuards(AuthGuard('jwt'))
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
@@ -50,8 +52,42 @@ export class UsersController {
    * Get all team members in the organization
    */
   @Get('team')
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   async getTeamMembers(@Req() req: any) {
     return this.usersService.getTeamMembers(req.user.organizationId);
+  }
+
+  /**
+   * PUT /api/users/:id/role
+   * Update user role (ADMIN only)
+   */
+  @Put(':id/role')
+  @Roles(UserRole.ADMIN)
+  async updateUserRole(
+    @Param('id') userId: string,
+    @Body('role') role: UserRole,
+    @Req() req: any,
+  ) {
+    return this.usersService.updateUserRole(
+      userId,
+      role,
+      req.user.id,
+      req.user.organizationId,
+    );
+  }
+
+  /**
+   * DELETE /api/users/:id
+   * Delete user (ADMIN only)
+   */
+  @Delete(':id')
+  @Roles(UserRole.ADMIN)
+  async deleteUser(@Param('id') userId: string, @Req() req: any) {
+    return this.usersService.deleteUser(
+      userId,
+      req.user.id,
+      req.user.organizationId,
+    );
   }
 
   /**

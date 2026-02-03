@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { AiService } from '../ai/ai.service';
+import { PluginEngineService } from '../plugins/plugin-engine.service';
 import axios from 'axios';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class MessagingService {
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeGateway,
     private readonly aiService: AiService,
+    private readonly pluginEngine: PluginEngineService,
   ) {}
 
   async processInbound(data: {
@@ -148,13 +150,20 @@ export class MessagingService {
       message,
     );
 
-    // 🤖 AI Auto-Reply: ตอบกลับอัตโนมัติด้วย AI
-    await this.sendAiAutoReply(
-      platform,
-      conversation,
-      customer,
-      data.content,
-    );
+    // 🔌 Plugin System: รัน plugins ที่เปิดใช้งาน
+    const pluginResponded = await this.runPlugins(platform, conversation, customer, message);
+
+    // 🤖 AI Auto-Reply: ตอบกลับอัตโนมัติด้วย AI (ถ้า Plugin ไม่ได้ตอบ)
+    if (!pluginResponded) {
+      await this.sendAiAutoReply(
+        platform,
+        conversation,
+        customer,
+        data.content,
+      );
+    } else {
+      this.logger.log(`⏭️ Skipping AI auto-reply because plugin already responded`);
+    }
   }
   async getConversations(
     organizationId: string,
@@ -633,6 +642,89 @@ export class MessagingService {
       },
     });
   }
+
+  /**
+   * 🔌 รัน plugins ที่เปิดใช้งาน
+   * @returns true ถ้า plugin ตอบกลับแล้ว, false ถ้าไม่มี plugin ตอบกลับ
+   */
+  private async runPlugins(
+    platform: any,
+    conversation: any,
+    customer: any,
+    message: any,
+  ): Promise<boolean> {
+    try {
+      this.logger.log(`🔌 Running plugins for conversation: ${conversation.id}`);
+
+      // นับจำนวนข้อความใน conversation
+      const messageCount = await this.prisma.message.count({
+        where: { conversationId: conversation.id },
+      });
+
+      // สร้าง context สำหรับ plugins
+      const context = {
+        message: {
+          content: message.content,
+          senderId: customer.externalId,
+          conversationId: conversation.id,
+          platform: platform.type,
+        },
+        conversation: {
+          id: conversation.id,
+          isFirstMessage: messageCount === 1, // ข้อความแรกหรือไม่
+          messageCount,
+        },
+        organizationId: platform.organizationId,
+      };
+
+      // รัน plugins
+      const responses = await this.pluginEngine.executePlugins(context);
+
+      let hasResponse = false;
+
+      // ส่งข้อความตอบกลับจาก plugins
+      for (const response of responses) {
+        if (response.shouldRespond && response.message) {
+          hasResponse = true;
+          this.logger.log(`📤 Sending plugin response: ${response.message.substring(0, 50)}...`);
+
+          // ส่งข้อความตามแต่ละ platform
+          if (platform.type === 'facebook') {
+            await this.sendFacebookMessage(platform, customer.externalId, response.message);
+          } else if (platform.type === 'instagram') {
+            await this.sendInstagramMessage(platform, customer.externalId, response.message);
+          } else if (platform.type === 'whatsapp') {
+            await this.sendWhatsAppMessage(platform, customer.externalId, response.message);
+          }
+
+          // บันทึกข้อความตอบกลับ
+          const pluginMessage = await this.prisma.message.create({
+            data: {
+              organizationId: platform.organizationId,
+              conversationId: conversation.id,
+              senderType: 'agent',
+              content: response.message,
+              contentType: 'text',
+            },
+          });
+
+          // ส่ง real-time update
+          this.realtime.emitNewMessage(
+            platform.organizationId,
+            conversation.id,
+            pluginMessage,
+          );
+        }
+      }
+
+      this.logger.log(`✅ Plugins executed: ${responses.length} responses`);
+      return hasResponse;
+    } catch (error) {
+      this.logger.error('Error running plugins:', error);
+      return false;
+    }
+  }
+
   /**
    * ส่งคำตอบอัตโนมัติจาก AI เมื่อลูกค้าส่งข้อความเข้ามา
    * จะไม่ส่งถ้ามี agent assign หรือมีคนตอบอยู่แล้ว

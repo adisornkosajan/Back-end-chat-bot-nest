@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UserRole } from '../../common/decorators/roles.decorator';
 
 @Injectable()
 export class UsersService {
@@ -284,4 +285,83 @@ export class UsersService {
     this.logger.log(`✅ Password changed successfully for user: ${userId}`);
     return { success: true, message: 'Password changed successfully' };
   }
+
+  /**
+   * Update user role (ADMIN only)
+   */
+  async updateUserRole(userId: string, newRole: UserRole, requestingUserId: string, organizationId: string) {
+    // Check if target user exists and belongs to organization
+    const targetUser = await this.prisma.user.findFirst({
+      where: { id: userId, organizationId },
+    });
+
+    if (!targetUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Prevent user from changing their own role
+    if (userId === requestingUserId) {
+      throw new BadRequestException('You cannot change your own role');
+    }
+
+    // Check if organization has at least one admin
+    if (targetUser.role === UserRole.ADMIN) {
+      const adminCount = await this.prisma.user.count({
+        where: { organizationId, role: UserRole.ADMIN },
+      });
+
+      if (adminCount <= 1) {
+        throw new BadRequestException('Cannot change the only admin. Assign another admin first.');
+      }
+    }
+
+    this.logger.log(`🔄 Updating user role: ${userId} to ${newRole}`);
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { role: newRole },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        updatedAt: true,
+      },
+    });
+  }
+
+  /**
+   * Delete user (ADMIN only)
+   */
+  async deleteUser(userId: string, requestingUserId: string, organizationId: string) {
+    const targetUser = await this.prisma.user.findFirst({
+      where: { id: userId, organizationId },
+    });
+
+    if (!targetUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (userId === requestingUserId) {
+      throw new BadRequestException('You cannot delete your own account');
+    }
+
+    // Check if organization has at least one admin
+    if (targetUser.role === UserRole.ADMIN) {
+      const adminCount = await this.prisma.user.count({
+        where: { organizationId, role: UserRole.ADMIN },
+      });
+
+      if (adminCount <= 1) {
+        throw new BadRequestException('Cannot delete the only admin');
+      }
+    }
+
+    this.logger.log(`🗑️ Deleting user: ${userId}`);
+    await this.prisma.user.delete({
+      where: { id: userId },
+    });
+
+    return { message: 'User deleted successfully' };
+  }
 }
+

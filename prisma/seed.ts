@@ -28,7 +28,7 @@ async function main() {
       passwordHash: passwordHash,
       name: 'Admin User',
       organizationId: org.id,
-      role: 'owner',
+      role: 'ADMIN',
     },
   });
   console.log('✅ User created:', user.email);

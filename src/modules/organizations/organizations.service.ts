@@ -62,7 +62,7 @@ export class OrganizationsService {
           name: data.adminName,
           passwordHash,
           organizationId: organization.id,
-          role: data.role || 'ADMIN',
+          role: (data.role as any) || 'ADMIN',
         },
       });
 
@@ -117,7 +117,7 @@ export class OrganizationsService {
         name: data.name,
         passwordHash,
         organizationId,
-        role: data.role || 'user',
+        role: (data.role as any) || 'USER',
       },
     });
 

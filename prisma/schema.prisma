@@ -10,6 +10,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserRole {
+  ADMIN
+  MANAGER
+  USER
+}
+
 model User {
   id             String         @id @default(uuid())
   email          String         @unique
@@ -17,7 +23,7 @@ model User {
   name           String?
   organizationId String
   organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  role           String         @default("user")
+  role           UserRole       @default(USER)
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
@@ -149,4 +155,22 @@ model AIConfig {
   updatedAt      DateTime     @updatedAt
 
   @@map("ai_configs")
+}
+
+model Plugin {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String       // Display name (e.g., "Salesforce", "HubSpot")
+  type           String       // Plugin type (e.g., "crm", "analytics", "marketing")
+  description    String?      @db.Text
+  apiKey         String?      @db.Text // API credentials
+  apiSecret      String?      @db.Text // API secret/password
+  config         Json?        // Additional configuration (webhook URLs, settings, etc.)
+  isActive       Boolean      @default(true)
+  createdBy      String       // User ID who created this plugin
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@map("plugins")
 }
