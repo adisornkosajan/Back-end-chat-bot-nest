@@ -29,6 +29,14 @@ export class MessagingController {
     );
   }
 
+  @Post(':id/resume-ai')
+  async resumeAI(
+    @Req() req: any,
+    @Param('id') id: string,
+  ) {
+    return this.messaging.resumeAI(req.user.organizationId, id);
+  }
+
   @Get()
   async list(
     @Req() req: any,

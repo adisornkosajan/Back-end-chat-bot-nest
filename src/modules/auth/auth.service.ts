@@ -560,4 +560,13 @@ export class AuthService {
       throw new UnauthorizedException('Failed to process OAuth callback');
     }
   }
+
+  async getUserById(userId: string, organizationId: string) {
+    return this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        organizationId,
+      },
+    });
+  }
 }

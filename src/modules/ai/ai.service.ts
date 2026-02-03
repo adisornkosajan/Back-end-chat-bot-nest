@@ -1,19 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly aiApiUrl: string;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private prisma: PrismaService,
+  ) {
     // ดึง URL ของ AI API จาก environment variable
     this.aiApiUrl = this.configService.get<string>('AI_API_URL') || 'http://localhost:5000/api/chat';
   }
 
   /**
-   * ส่งข้อความไปยัง AI API และรับคำตอบกลับ
    * @param message ข้อความจากลูกค้า
    * @param conversationId ID ของ conversation (สำหรับ context)
    * @param customerId ID ของลูกค้า
@@ -90,6 +93,179 @@ export class AiService {
     } catch (error) {
       this.logger.warn('⚠️ AI API health check failed');
       return false;
+    }
+  }
+
+  /**
+   * Get AI configuration for organization
+   */
+  async getConfig(organizationId: string) {
+    this.logger.log(`📝 Getting AI config for organization ${organizationId}`);
+    
+    let config = await this.prisma.aIConfig.findUnique({
+      where: { organizationId },
+    });
+
+    // If no config exists, return default
+    if (!config) {
+      return {
+        provider: 'openai',
+        model: 'gpt-4',
+        temperature: 0.7,
+        maxTokens: 1000,
+        systemPrompt: 'You are a helpful customer service assistant.',
+        isActive: false,
+      };
+    }
+
+    // Don't return API key for security
+    return {
+      provider: config.provider,
+      model: config.model,
+      temperature: config.temperature,
+      maxTokens: config.maxTokens,
+      systemPrompt: config.systemPrompt,
+      isActive: config.isActive,
+      hasApiKey: !!config.apiKey,
+    };
+  }
+
+  /**
+   * Save AI configuration for organization
+   */
+  async saveConfig(
+    organizationId: string,
+    data: {
+      provider: string;
+      model?: string;
+      apiKey?: string;
+      temperature?: number;
+      maxTokens?: number;
+      systemPrompt?: string;
+    },
+  ) {
+    this.logger.log(`💾 Saving AI config for organization ${organizationId}`);
+
+    const config = await this.prisma.aIConfig.upsert({
+      where: { organizationId },
+      create: {
+        organizationId,
+        provider: data.provider,
+        model: data.model,
+        apiKey: data.apiKey,
+        temperature: data.temperature ?? 0.7,
+        maxTokens: data.maxTokens ?? 1000,
+        systemPrompt: data.systemPrompt,
+        isActive: true,
+      },
+      update: {
+        provider: data.provider,
+        model: data.model,
+        ...(data.apiKey && { apiKey: data.apiKey }), // Only update if provided
+        temperature: data.temperature ?? 0.7,
+        maxTokens: data.maxTokens ?? 1000,
+        systemPrompt: data.systemPrompt,
+        isActive: true,
+      },
+    });
+
+    this.logger.log(`✅ AI config saved for organization ${organizationId}`);
+
+    // Return without API key
+    return {
+      provider: config.provider,
+      model: config.model,
+      temperature: config.temperature,
+      maxTokens: config.maxTokens,
+      systemPrompt: config.systemPrompt,
+      isActive: config.isActive,
+    };
+  }
+
+  /**
+   * Test AI connection with provided settings
+   */
+  async testConnection(data: {
+    provider: string;
+    model?: string;
+    apiKey: string;
+  }): Promise<{ success: boolean; message: string }> {
+    this.logger.log(`🧪 Testing AI connection with ${data.provider}`);
+
+    try {
+      // Test based on provider
+      if (data.provider === 'openai') {
+        const response = await axios.post(
+          'https://api.openai.com/v1/chat/completions',
+          {
+            model: data.model || 'gpt-3.5-turbo',
+            messages: [{ role: 'user', content: 'Test connection' }],
+            max_tokens: 10,
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${data.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        );
+
+        if (response.status === 200) {
+          return { success: true, message: 'Connection successful' };
+        }
+      } else if (data.provider === 'anthropic') {
+        const response = await axios.post(
+          'https://api.anthropic.com/v1/messages',
+          {
+            model: data.model || 'claude-3-opus-20240229',
+            messages: [{ role: 'user', content: 'Test connection' }],
+            max_tokens: 10,
+          },
+          {
+            headers: {
+              'x-api-key': data.apiKey,
+              'anthropic-version': '2023-06-01',
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        );
+
+        if (response.status === 200) {
+          return { success: true, message: 'Connection successful' };
+        }
+      } else if (data.provider === 'gemini') {
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/${data.model || 'gemini-pro'}:generateContent?key=${data.apiKey}`,
+          {
+            contents: [{ parts: [{ text: 'Test connection' }] }],
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        );
+
+        if (response.status === 200) {
+          return { success: true, message: 'Connection successful' };
+        }
+      }
+
+      return { success: false, message: 'Unsupported provider' };
+    } catch (error: any) {
+      this.logger.error('❌ AI connection test failed:', error.message);
+      
+      if (error.response?.status === 401) {
+        return { success: false, message: 'Invalid API key' };
+      }
+      
+      return { 
+        success: false, 
+        message: error.response?.data?.error?.message || error.message || 'Connection failed' 
+      };
     }
   }
 }

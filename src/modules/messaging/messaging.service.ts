@@ -602,7 +602,40 @@ export class MessagingService {
   }
 
   /**
+   * Resume AI auto-reply - reset requestHuman flag
+   */
+  async resumeAI(orgId: string, conversationId: string) {
+    this.logger.log(`🤖 Resuming AI for conversation ${conversationId}`);
+
+    const conversation = await this.prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        organizationId: orgId,
+      },
+    });
+
+    if (!conversation) {
+      throw new Error('Conversation not found');
+    }
+
+    // Update and return full conversation with relations
+    return this.prisma.conversation.update({
+      where: {
+        id: conversationId,
+        organizationId: orgId,
+      },
+      data: {
+        requestHuman: false,
+      },
+      include: {
+        customer: true,
+        platform: true,
+      },
+    });
+  }
+  /**
    * ส่งคำตอบอัตโนมัติจาก AI เมื่อลูกค้าส่งข้อความเข้ามา
+   * จะไม่ส่งถ้ามี agent assign หรือมีคนตอบอยู่แล้ว
    */
   private async sendAiAutoReply(
     platform: any,
@@ -611,6 +644,81 @@ export class MessagingService {
     customerMessage: string,
   ) {
     try {
+      // 🔍 ตรวจสอบว่าลูกค้าขอคุยกับคนหรือไม่ (ต้องเช็คก่อนเพื่อ detect keywords ให้ได้)
+      const requestHumanKeywords = [
+        // ภาษาไทย
+        'พูดกับคน', 'คุยกับคน', 'พูดกับพนักงาน', 'คุยกับพนักงาน',
+        'พูดกับแอดมิน', 'คุยกับแอดมิน', 'ติดต่อพนักงาน', 'ติดต่อเจ้าหน้าที่',
+        'ต้องการพูดกับคน', 'ขอพูดกับคน', 'ขอคุยกับคน',
+        // English
+        'talk to human', 'speak to human', 'talk to agent', 'speak to agent',
+        'talk to staff', 'speak to staff', 'customer service', 'human agent',
+        'real person', 'actual person', 'talk to admin', 'speak to admin',
+        'contact staff', 'need human', 'want human', 'human support'
+      ];
+
+      const messageLC = customerMessage.toLowerCase();
+      const isRequestingHuman = requestHumanKeywords.some(keyword => 
+        messageLC.includes(keyword.toLowerCase())
+      );
+
+      if (isRequestingHuman) {
+        this.logger.log(`🙋 Customer requesting human agent for conversation: ${conversation.id}`);
+        
+        // อัปเดต conversation flag (แม้จะมี agent assign อยู่แล้วก็อัปเดตได้)
+        await this.prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { requestHuman: true },
+        });
+
+        // ตอบกลับว่ากำลังเชื่อมต่อกับเจ้าหน้าที่
+        const humanRequestResponse = messageLC.includes('พ') || messageLC.includes('คุย') 
+          ? 'ขอสักครู่นะคะ กำลังเชื่อมต่อกับเจ้าหน้าที่ให้คุณค่ะ 🙏'
+          : 'Please wait a moment. We\'re connecting you to our staff. 🙏';
+
+        // ส่งข้อความตอบกลับ
+        if (platform.type === 'facebook') {
+          await this.sendFacebookMessage(platform, customer.externalId, humanRequestResponse);
+        } else if (platform.type === 'instagram') {
+          await this.sendInstagramMessage(platform, customer.externalId, humanRequestResponse);
+        } else if (platform.type === 'whatsapp') {
+          await this.sendWhatsAppMessage(platform, customer.externalId, humanRequestResponse);
+        }
+
+        // บันทึกข้อความตอบกลับ
+        const aiMessage = await this.prisma.message.create({
+          data: {
+            organizationId: platform.organizationId,
+            conversationId: conversation.id,
+            senderType: 'agent',
+            content: humanRequestResponse,
+            contentType: 'text',
+          },
+        });
+
+        // ส่ง realtime notification
+        this.realtime.emitNewMessage(
+          platform.organizationId,
+          conversation.id,
+          aiMessage,
+        );
+
+        this.logger.log(`✅ Human request acknowledged and conversation flagged`);
+        return; // หยุดไม่ตอบต่อ
+      }
+
+      // ✋ ตรวจสอบว่ามี agent assign หรือไม่
+      if (conversation.assignedAgentId) {
+        this.logger.log(`⏭️ Skip AI auto-reply: Conversation ${conversation.id} is assigned to agent ${conversation.assignedAgentId}`);
+        return;
+      }
+
+      // ✋ ตรวจสอบว่าลูกค้าเคยขอคุยกับคนไปแล้วหรือไม่
+      if (conversation.requestHuman) {
+        this.logger.log(`⏭️ Skip AI auto-reply: Customer requested human for conversation ${conversation.id}`);
+        return;
+      }
+
       this.logger.log(`🤖 Generating AI auto-reply for conversation: ${conversation.id}`);
 
       // เรียก AI API เพื่อรับคำตอบ
@@ -657,6 +765,7 @@ export class MessagingService {
     } catch (error) {
       this.logger.error(`❌ Failed to send AI auto-reply: ${error.message}`);
     }
+  
   }
 
   /**

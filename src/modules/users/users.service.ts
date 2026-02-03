@@ -188,4 +188,100 @@ export class UsersService {
       },
     });
   }
+
+  /**
+   * Update user profile
+   */
+  async updateProfile(
+    userId: string,
+    organizationId: string,
+    data: { name?: string; email?: string },
+  ) {
+    this.logger.log(`📝 Updating profile for user: ${userId}`);
+
+    // Check if email is being changed and if it's already taken
+    if (data.email) {
+      const existingUser = await this.prisma.user.findFirst({
+        where: {
+          email: data.email,
+          organizationId,
+          NOT: {
+            id: userId,
+          },
+        },
+      });
+
+      if (existingUser) {
+        throw new Error('Email is already in use by another user');
+      }
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: {
+        id: userId,
+      },
+      data: {
+        ...(data.name && { name: data.name }),
+        ...(data.email && { email: data.email }),
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        createdAt: true,
+      },
+    });
+
+    this.logger.log(`✅ Profile updated for user: ${userId}`);
+    return updatedUser;
+  }
+
+  /**
+   * Change user password
+   */
+  async changePassword(
+    userId: string,
+    organizationId: string,
+    currentPassword: string,
+    newPassword: string,
+  ) {
+    this.logger.log(`🔐 Changing password for user: ${userId}`);
+
+    // Get user with password
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        organizationId,
+      },
+    });
+
+    if (!user || !user.passwordHash) {
+      throw new Error('User not found or invalid authentication method');
+    }
+
+    // Verify current password
+    const bcrypt = require('bcrypt');
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.passwordHash);
+
+    if (!isPasswordValid) {
+      throw new Error('Current password is incorrect');
+    }
+
+    // Hash new password
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+
+    // Update password
+    await this.prisma.user.update({
+      where: {
+        id: userId,
+      },
+      data: {
+        passwordHash: newPasswordHash,
+      },
+    });
+
+    this.logger.log(`✅ Password changed successfully for user: ${userId}`);
+    return { success: true, message: 'Password changed successfully' };
+  }
 }

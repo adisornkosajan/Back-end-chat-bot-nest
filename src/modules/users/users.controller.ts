@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Param, Body, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Body, UseGuards, Req } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { UsersService } from './users.service';
 
@@ -6,6 +6,44 @@ import { UsersService } from './users.service';
 @UseGuards(AuthGuard('jwt'))
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  /**
+   * GET /api/users/profile
+   * Get current user profile
+   */
+  @Get('profile')
+  async getProfile(@Req() req: any) {
+    return this.usersService.getUserById(req.user.id, req.user.organizationId);
+  }
+
+  /**
+   * PUT /api/users/profile
+   * Update current user profile
+   */
+  @Put('profile')
+  async updateProfile(
+    @Req() req: any,
+    @Body() body: { name?: string; email?: string },
+  ) {
+    return this.usersService.updateProfile(req.user.id, req.user.organizationId, body);
+  }
+
+  /**
+   * POST /api/users/change-password
+   * Change current user password
+   */
+  @Post('change-password')
+  async changePassword(
+    @Req() req: any,
+    @Body() body: { currentPassword: string; newPassword: string },
+  ) {
+    return this.usersService.changePassword(
+      req.user.id,
+      req.user.organizationId,
+      body.currentPassword,
+      body.newPassword,
+    );
+  }
 
   /**
    * GET /api/users/team

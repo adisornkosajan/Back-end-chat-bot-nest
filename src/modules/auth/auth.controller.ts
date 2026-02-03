@@ -1,4 +1,14 @@
-import { Body, Controller, Post, Get, Query, Logger, UseGuards, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Post,
+  Get,
+  Query,
+  Logger,
+  UseGuards,
+  Req,
+  Res,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
 import { AuthService } from './auth.service';
@@ -11,7 +21,8 @@ export class AuthController {
 
   @Post('register')
   async register(
-    @Body() body: {
+    @Body()
+    body: {
       email: string;
       password: string;
       name: string;
@@ -19,15 +30,23 @@ export class AuthController {
     },
   ) {
     this.logger.log(`📝 Registration attempt for email: ${body.email}`);
-    this.logger.debug(`📦 Request body received:`, JSON.stringify(body, null, 2));
-    this.logger.debug(`📊 Field check - email: "${body.email}", password: ${body.password ? 'exists' : 'missing'}, name: "${body.name}", org: "${body.organizationName}"`);
-    
+    this.logger.debug(
+      `📦 Request body received:`,
+      JSON.stringify(body, null, 2),
+    );
+    this.logger.debug(
+      `📊 Field check - email: "${body.email}", password: ${body.password ? 'exists' : 'missing'}, name: "${body.name}", org: "${body.organizationName}"`,
+    );
+
     try {
       const result = await this.authService.register(body);
       this.logger.log(`✅ Registration successful for user: ${result.user.id}`);
       return result;
     } catch (error) {
-      this.logger.error(`❌ Registration failed for email: ${body.email}`, error.message);
+      this.logger.error(
+        `❌ Registration failed for email: ${body.email}`,
+        error.message,
+      );
       throw error;
     }
   }
@@ -35,6 +54,7 @@ export class AuthController {
   @Post('login')
   async login(
     @Body() body: { email: string; password: string },
+    @Req() req: any,
   ) {
     this.logger.log(`🔐 Login attempt for email: ${body.email}`);
     try {
@@ -43,10 +63,43 @@ export class AuthController {
         body.password,
       );
       const result = await this.authService.login(user);
-      this.logger.log(`✅ Login successful for user: ${user.id}`);
+      this.logger.log(
+        `✅ Login successful for user: ${user.id} header ${JSON.stringify(req.headers)}`,
+      );
       return result;
     } catch (error) {
-      this.logger.error(`❌ Login failed for email: ${body.email}`, error.message);
+      this.logger.error(
+        `❌ Login failed for email: ${body.email}`,
+        error.message,
+      );
+      throw error;
+    }
+  }
+
+  @Get('me')
+  @UseGuards(AuthGuard('jwt'))
+  async getCurrentUser(@Req() req: any) {
+    const userId = req.user.userId || req.user.sub;
+    const organizationId = req.user.organizationId;
+    
+    this.logger.log(`👤 Getting current user: ${userId}`);
+    
+    try {
+      const user = await this.authService.getUserById(userId, organizationId);
+      
+      if (!user) {
+        throw new Error('User not found');
+      }
+      
+      return {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        organizationId: user.organizationId,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Failed to get current user:`, error.message);
       throw error;
     }
   }
@@ -56,16 +109,20 @@ export class AuthController {
   async getOAuthUrl(@Req() req: any) {
     const organizationId = req.user.organizationId;
     const userId = req.user.userId;
-    
+
     if (!organizationId) {
-      this.logger.error(`❌ No organizationId found for user: ${userId}`);
+      this.logger.error(
+        `❌ No organizationId found for user: ${userId} header ${JSON.stringify(req.headers)}`,
+      );
       throw new Error('User has no organization');
     }
-    
+
     const state = `${organizationId}:${Date.now()}`;
     const url = this.authService.buildOAuthUrl(state);
-    
-    this.logger.log(`🔗 OAuth URL generated for user: ${userId}, org: ${organizationId}`);
+
+    this.logger.log(
+      `🔗 OAuth URL generated for user: ${userId}, org: ${organizationId}`,
+    );
     return { url, state, organizationId };
   }
 
@@ -79,16 +136,18 @@ export class AuthController {
     try {
       const result = await this.authService.handleOAuthCallback(code, state);
       this.logger.log(`✅ OAuth callback processed successfully`);
-      
+
       // Redirect กลับไปที่ frontend connections page
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       res.redirect(`${frontendUrl}/dashboard/connections?oauth=success`);
     } catch (error) {
       this.logger.error(`❌ OAuth callback failed:`, error.message);
-      
+
       // Redirect กลับไปพร้อม error message
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-      res.redirect(`${frontendUrl}/dashboard/connections?oauth=error&message=${encodeURIComponent(error.message)}`);
+      res.redirect(
+        `${frontendUrl}/dashboard/connections?oauth=error&message=${encodeURIComponent(error.message)}`,
+      );
     }
   }
 
@@ -115,16 +174,14 @@ export class AuthController {
    */
   @Post('accept-invite')
   async acceptInvite(
-    @Body() body: {
-      token: string;
-      name: string;
-      password: string;
-    },
+    @Body() body: { token: string; name: string; password: string },
   ) {
     this.logger.log(`💌 Accepting invitation`);
     try {
       const result = await this.authService.acceptInvitation(body);
-      this.logger.log(`✅ Invitation accepted, user created: ${result.user.id}`);
+      this.logger.log(
+        `✅ Invitation accepted, user created: ${result.user.id}`,
+      );
       return result;
     } catch (error) {
       this.logger.error(`❌ Failed to accept invitation:`, error.message);

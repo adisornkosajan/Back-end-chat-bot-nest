@@ -145,4 +145,36 @@ export class OrganizationsService {
       },
     });
   }
+
+  /**
+   * Update organization details
+   * สำหรับ admin แก้ไขข้อมูลองค์กรของตัวเอง
+   */
+  async updateOrganization(organizationId: string, data: { name?: string }) {
+    this.logger.log(`🔄 Updating organization ${organizationId}`);
+
+    // Check if name already exists (if changing name)
+    if (data.name) {
+      const existingOrg = await this.prisma.organization.findFirst({
+        where: {
+          name: data.name,
+          id: { not: organizationId },
+        },
+      });
+
+      if (existingOrg) {
+        throw new Error('Organization name already exists');
+      }
+    }
+
+    // Update organization
+    const organization = await this.prisma.organization.update({
+      where: { id: organizationId },
+      data,
+    });
+
+    this.logger.log(`✅ Updated organization ${organizationId}`);
+
+    return organization;
+  }
 }

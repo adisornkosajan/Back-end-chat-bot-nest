@@ -1,9 +1,33 @@
-import { Controller, Post, Get, Body, Param } from '@nestjs/common';
+import { Controller, Post, Get, Put, Body, Param, UseGuards, Req } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { OrganizationsService } from './organizations.service';
 
 @Controller('organizations')
 export class OrganizationsController {
   constructor(private readonly organizationsService: OrganizationsService) {}
+
+  /**
+   * GET /api/organizations/current
+   * Get current user's organization
+   */
+  @Get('current')
+  @UseGuards(AuthGuard('jwt'))
+  async getCurrentOrganization(@Req() req: any) {
+    return this.organizationsService.findById(req.user.organizationId);
+  }
+
+  /**
+   * PUT /api/organizations/current
+   * Update current user's organization
+   */
+  @Put('current')
+  @UseGuards(AuthGuard('jwt'))
+  async updateCurrentOrganization(
+    @Req() req: any,
+    @Body() body: { name?: string; description?: string },
+  ) {
+    return this.organizationsService.updateOrganization(req.user.organizationId, body);
+  }
 
   /**
    * POST /api/organizations

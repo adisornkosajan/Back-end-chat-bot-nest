@@ -86,6 +86,7 @@ model Conversation {
   customer         Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   status           String       @default("open") // open, closed, archived
   assignedAgentId  String?      // Agent assigned to this conversation
+  requestHuman     Boolean      @default(false) // Customer requested human agent
   firstResponseAt  DateTime?    // When agent first responded
   lastResponseAt   DateTime?    // Last agent response time
   lastMessageAt    DateTime     @default(now())
@@ -132,4 +133,20 @@ model Invitation {
   @@index([token])
   @@index([email])
   @@map("invitations")
+}
+
+model AIConfig {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  provider       String       @default("openai") // openai, anthropic, gemini
+  model          String?      // gpt-4, gpt-3.5-turbo, claude-3-opus, gemini-pro, etc
+  apiKey         String?      @db.Text // API key for the provider
+  temperature    Float        @default(0.7)
+  maxTokens      Int          @default(1000)
+  systemPrompt   String?      @db.Text // Custom system prompt
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@map("ai_configs")
 }
