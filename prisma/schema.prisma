@@ -33,17 +33,18 @@ model User {
 }
 
 model Organization {
-  id            String         @id @default(uuid())
-  name          String
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  users         User[]
-  platforms     Platform[]
-  customers     Customer[]
-  conversations Conversation[]
-  messages      Message[]
-  invitations   Invitation[]
-  notes         Note[]
+  id               String            @id @default(uuid())
+  name             String
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  users            User[]
+  platforms        Platform[]
+  customers        Customer[]
+  conversations    Conversation[]
+  messages         Message[]
+  invitations      Invitation[]
+  notes            Note[]
+  customerSummaries CustomerSummary[]
 
   @@map("organizations")
 }
@@ -87,23 +88,24 @@ model Customer {
 }
 
 model Conversation {
-  id               String       @id @default(uuid())
+  id               String           @id @default(uuid())
   organizationId   String
-  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   platformId       String
-  platform         Platform     @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  platform         Platform         @relation(fields: [platformId], references: [id], onDelete: Cascade)
   customerId       String
-  customer         Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  status           String       @default("open") // open, closed, archived
-  assignedAgentId  String?      // Agent assigned to this conversation
-  requestHuman     Boolean      @default(false) // Customer requested human agent
-  firstResponseAt  DateTime?    // When agent first responded
-  lastResponseAt   DateTime?    // Last agent response time
-  lastMessageAt    DateTime     @default(now())
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  customer         Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  status           String           @default("open") // open, closed, archived
+  assignedAgentId  String?          // Agent assigned to this conversation
+  requestHuman     Boolean          @default(false) // Customer requested human agent
+  firstResponseAt  DateTime?        // When agent first responded
+  lastResponseAt   DateTime?        // Last agent response time
+  lastMessageAt    DateTime         @default(now())
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
   messages         Message[]
   notes            Note[]
+  customerSummary  CustomerSummary? // One-to-one relation
 
   @@unique([platformId, customerId])
   @@map("conversations")
@@ -221,3 +223,21 @@ model NoteHistory {
   @@map("note_history")
 }
 
+model CustomerSummary {
+  id             String        @id @default(uuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversationId String        @unique // One summary per conversation
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  name           String?       // Customer name
+  mobile         String?       // Mobile number
+  email          String?       // Email address
+  importantKey   String?       @db.Text // Important information/notes
+  createdBy      String?       // User ID who created this summary
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([organizationId])
+  @@index([conversationId])
+  @@map("customer_summaries")
+}

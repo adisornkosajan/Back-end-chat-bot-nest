@@ -368,6 +368,34 @@ export class PluginEngineService {
   }
 
   /**
+   * ดึงจำนวนเงินจากข้อความ
+   * รองรับรูปแบบ: "ชำระเงิน 500", "จ่าย 1000 บาท", "payment 250"
+   */
+  private extractAmountFromMessage(message: string): number | undefined {
+    // รูปแบบที่รองรับ: ตัวเลข 1-6 หลัก ตามด้วย "บาท" หรือไม่ก็ได้
+    const patterns = [
+      /(\d{1,6})\s*บาท/i,           // "500 บาท", "1000บาท"
+      /(\d{1,6})\s*baht/i,           // "500 baht"
+      /(\d{1,6})\s*฿/,               // "500฿"
+      /(?:ชำระ|จ่าย|pay|payment)\s+(\d{1,6})/i, // "ชำระ 500", "pay 1000"
+      /(\d{1,6})\s*$/, // ตัวเลขท้ายข้อความ
+    ];
+
+    for (const pattern of patterns) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        const amount = parseFloat(match[1]);
+        // ตรวจสอบว่าเป็นจำนวนเงินที่สมเหตุสมผล (1-1,000,000 บาท)
+        if (amount >= 1 && amount <= 1000000) {
+          return amount;
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
    * Plugin 9: Payment - ระบบชำระเงิน
    */
   private async runPaymentPlugin(
@@ -384,14 +412,28 @@ export class PluginEngineService {
       if (paymentGateway === 'promptpay') {
         // สร้าง QR Code
         const phoneNumber = config?.promptpayConfig?.phoneNumber || '0812345678';
-        const amount = config?.promptpayConfig?.defaultAmount || undefined;
+        
+        // ลองดึงจำนวนเงินจากข้อความก่อน ถ้าไม่มีใช้ default
+        let amount = this.extractAmountFromMessage(context.message.content);
+        if (!amount) {
+          amount = config?.promptpayConfig?.defaultAmount;
+        }
         
         try {
           const qrData = await this.qrcodeService.generatePromptPayQR(phoneNumber, amount);
           
+          // สร้างข้อความตอบกลับ
+          let responseMessage = `💳 ช่องทางการชำระเงิน\n\n📱 พร้อมเพย์: ${phoneNumber}`;
+          
+          if (amount) {
+            responseMessage += `\n💰 จำนวนเงิน: ${amount.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท`;
+          }
+          
+          responseMessage += '\n\n📲 สแกน QR Code ด้านล่างเพื่อชำระเงิน';
+          
           return {
             shouldRespond: true,
-            message: `💳 ช่องทางการชำระเงิน\n\n📱 พร้อมเพย์: ${phoneNumber}\n💰 สแกน QR Code ด้านล่างเพื่อชำระเงิน`,
+            message: responseMessage,
             imageUrl: qrData.qrCodeImage, // ส่ง QR Code image
             stopProcessing: false,
           };

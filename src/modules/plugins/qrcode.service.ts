@@ -12,9 +12,20 @@ export class QRCodeService {
     // ลบ - และช่องว่างออกจากเบอร์
     const cleanPhone = phoneNumber.replace(/[-\s]/g, '');
     
-    // แปลงเบอร์โทรเป็นรูปแบบ PromptPay
-    // 0812345678 -> 0066812345678 (เติม 0066 แทน 0)
-    const formattedPhone = '0066' + cleanPhone.substring(1);
+    // แปลงเบอร์โทรเป็นรูปแบบ PromptPay (National ID format)
+    // เบอร์โทร: 0812345678 -> 0066812345678 (13 หลัก)
+    // Tax ID: 1234567890123 (13 หลัก) -> ใช้ตรงๆ
+    let promptpayId: string;
+    
+    if (cleanPhone.length === 10 && cleanPhone.startsWith('0')) {
+      // เบอร์โทรศัพท์: แทน 0 ด้วย 0066
+      promptpayId = '0066' + cleanPhone.substring(1);
+    } else if (cleanPhone.length === 13) {
+      // Tax ID: ใช้ตรงๆ
+      promptpayId = cleanPhone;
+    } else {
+      throw new Error('Invalid phone number or Tax ID format');
+    }
 
     // สร้าง Payload ตาม EMVCo standard
     let payload = '';
@@ -22,16 +33,19 @@ export class QRCodeService {
     // Payload Format Indicator
     payload += this.buildTLV('00', '01');
     
-    // Point of Initiation Method (Static QR)
-    payload += this.buildTLV('01', '11'); // 11 = static, 12 = dynamic
+    // Point of Initiation Method
+    payload += this.buildTLV('01', '12'); // 12 = dynamic (รองรับจำนวนเงิน)
     
-    // Merchant Account Information
+    // Merchant Account Information (Tag 29)
     let merchantInfo = '';
     merchantInfo += this.buildTLV('00', 'A000000677010111'); // PromptPay AID
-    merchantInfo += this.buildTLV('01', formattedPhone); // Phone number
-    if (amount) {
-      merchantInfo += this.buildTLV('02', '00'); // Bill Payment
-    }
+    
+    // Tag 01 = Proxy ID (เบอร์โทร format: 0066XXXXXXXXX)
+    merchantInfo += this.buildTLV('01', promptpayId);
+    
+    // Tag 02 = Merchant Type (optional)
+    // merchantInfo += this.buildTLV('02', '00'); // Bill Payment
+    
     payload += this.buildTLV('29', merchantInfo);
     
     // Transaction Currency (764 = THB)
