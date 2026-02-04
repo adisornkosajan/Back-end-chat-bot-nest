@@ -26,6 +26,8 @@ model User {
   role           UserRole       @default(USER)
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
+  notes          Note[]         // Notes created by this user
+  noteEdits      NoteHistory[]  // Note edits made by this user
 
   @@map("users")
 }
@@ -41,6 +43,7 @@ model Organization {
   conversations Conversation[]
   messages      Message[]
   invitations   Invitation[]
+  notes         Note[]
 
   @@map("organizations")
 }
@@ -77,6 +80,7 @@ model Customer {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   conversations  Conversation[]
+  notes          Note[]
 
   @@unique([platformId, externalId])
   @@map("customers")
@@ -99,6 +103,7 @@ model Conversation {
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   messages         Message[]
+  notes            Note[]
 
   @@unique([platformId, customerId])
   @@map("conversations")
@@ -174,3 +179,45 @@ model Plugin {
   @@index([organizationId])
   @@map("plugins")
 }
+
+model Note {
+  id             String        @id @default(uuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversationId String?       // Optional: note for specific conversation
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  customerId     String?       // Optional: note for specific customer
+  customer       Customer?     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  content        String        @db.Text
+  type           String        @default("general") // general, important, reminder, follow-up
+  visibility     String        @default("internal") // internal, public
+  tags           Json?         // Tags for categorizing notes (array of strings)
+  isPinned       Boolean       @default(false) // Pin important notes to top
+  createdBy      String        // User ID who created this note
+  creator        User          @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  history        NoteHistory[] // History of edits
+
+  @@index([organizationId])
+  @@index([conversationId])
+  @@index([customerId])
+  @@index([createdBy])
+  @@map("notes")
+}
+
+model NoteHistory {
+  id             String   @id @default(uuid())
+  noteId         String
+  note           Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  content        String   @db.Text
+  type           String
+  editedBy       String
+  editor         User     @relation(fields: [editedBy], references: [id], onDelete: Cascade)
+  editedAt       DateTime @default(now())
+
+  @@index([noteId])
+  @@index([editedBy])
+  @@map("note_history")
+}
+

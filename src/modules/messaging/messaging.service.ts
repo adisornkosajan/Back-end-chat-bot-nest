@@ -690,11 +690,11 @@ export class MessagingService {
 
           // ส่งข้อความตามแต่ละ platform
           if (platform.type === 'facebook') {
-            await this.sendFacebookMessage(platform, customer.externalId, response.message);
+            await this.sendFacebookMessage(platform, customer.externalId, response.message, response.imageUrl);
           } else if (platform.type === 'instagram') {
-            await this.sendInstagramMessage(platform, customer.externalId, response.message);
+            await this.sendInstagramMessage(platform, customer.externalId, response.message, response.imageUrl);
           } else if (platform.type === 'whatsapp') {
-            await this.sendWhatsAppMessage(platform, customer.externalId, response.message);
+            await this.sendWhatsAppMessage(platform, customer.externalId, response.message, response.imageUrl);
           }
 
           // บันทึกข้อความตอบกลับ
@@ -704,7 +704,7 @@ export class MessagingService {
               conversationId: conversation.id,
               senderType: 'agent',
               content: response.message,
-              contentType: 'text',
+              contentType: response.imageUrl ? 'image' : 'text',
             },
           });
 
@@ -867,22 +867,69 @@ export class MessagingService {
     platform: any,
     recipientId: string,
     message: string,
+    imageUrl?: string,
   ) {
     const pageToken = platform.accessToken;
     if (!pageToken) {
       throw new Error('Facebook access token not found');
     }
 
-    await axios.post(
-      'https://graph.facebook.com/v19.0/me/messages',
-      {
-        recipient: { id: recipientId },
-        message: { text: message },
-      },
-      {
-        params: { access_token: pageToken },
-      },
-    );
+    // ถ้ามีรูปภาพ ส่ง text ก่อน แล้วส่งรูป
+    if (imageUrl) {
+      // ส่ง text message
+      await axios.post(
+        'https://graph.facebook.com/v19.0/me/messages',
+        {
+          recipient: { id: recipientId },
+          message: { text: message },
+        },
+        {
+          params: { access_token: pageToken },
+        },
+      );
+
+      // ส่ง image (ถ้าเป็น data URL ต้องแปลงเป็น hosted URL)
+      // Facebook ต้องการ URL จริง ไม่รับ data:image/png;base64
+      // เราจะ upload ไปเป็น attachment แทน
+      const base64Data = imageUrl.replace(/^data:image\/\w+;base64,/, '');
+      const buffer = Buffer.from(base64Data, 'base64');
+      
+      // Upload เป็น attachment
+      const FormData = require('form-data');
+      const form = new FormData();
+      form.append('recipient', JSON.stringify({ id: recipientId }));
+      form.append('message', JSON.stringify({
+        attachment: {
+          type: 'image',
+          payload: {},
+        },
+      }));
+      form.append('filedata', buffer, {
+        filename: 'qrcode.png',
+        contentType: 'image/png',
+      });
+
+      await axios.post(
+        'https://graph.facebook.com/v19.0/me/messages',
+        form,
+        {
+          params: { access_token: pageToken },
+          headers: form.getHeaders(),
+        },
+      );
+    } else {
+      // ส่ง text อย่างเดียว
+      await axios.post(
+        'https://graph.facebook.com/v19.0/me/messages',
+        {
+          recipient: { id: recipientId },
+          message: { text: message },
+        },
+        {
+          params: { access_token: pageToken },
+        },
+      );
+    }
   }
 
   /**
@@ -892,22 +939,63 @@ export class MessagingService {
     platform: any,
     recipientId: string,
     message: string,
+    imageUrl?: string,
   ) {
     const pageToken = platform.accessToken;
     if (!pageToken) {
       throw new Error('Instagram access token not found');
     }
 
-    await axios.post(
-      'https://graph.facebook.com/v19.0/me/messages',
-      {
-        recipient: { id: recipientId },
-        message: { text: message },
-      },
-      {
-        params: { access_token: pageToken },
-      },
-    );
+    // Instagram ใช้ API เดียวกับ Facebook
+    if (imageUrl) {
+      await axios.post(
+        'https://graph.facebook.com/v19.0/me/messages',
+        {
+          recipient: { id: recipientId },
+          message: { text: message },
+        },
+        {
+          params: { access_token: pageToken },
+        },
+      );
+
+      const base64Data = imageUrl.replace(/^data:image\/\w+;base64,/, '');
+      const buffer = Buffer.from(base64Data, 'base64');
+      
+      const FormData = require('form-data');
+      const form = new FormData();
+      form.append('recipient', JSON.stringify({ id: recipientId }));
+      form.append('message', JSON.stringify({
+        attachment: {
+          type: 'image',
+          payload: {},
+        },
+      }));
+      form.append('filedata', buffer, {
+        filename: 'qrcode.png',
+        contentType: 'image/png',
+      });
+
+      await axios.post(
+        'https://graph.facebook.com/v19.0/me/messages',
+        form,
+        {
+          params: { access_token: pageToken },
+          headers: form.getHeaders(),
+        },
+      );
+    } else {
+      await axios.post(
+        'https://graph.facebook.com/v19.0/me/messages',
+        {
+          recipient: { id: recipientId },
+          message: { text: message },
+        },
+        {
+          params: { access_token: pageToken },
+        },
+      );
+    }
   }
 
   /**
@@ -917,15 +1005,19 @@ export class MessagingService {
     platform: any,
     recipientPhone: string,
     message: string,
+    imageUrl?: string,
   ) {
-    const credentials = platform.credentials as any;
-    const phoneNumberId = credentials?.phoneNumberId;
+    const phoneNumberId = platform.pageId;
     const accessToken = platform.accessToken;
 
     if (!phoneNumberId || !accessToken) {
+      this.logger.error(`❌ WhatsApp credentials missing - phoneNumberId: ${phoneNumberId}, accessToken: ${accessToken ? 'present' : 'missing'}`);
       throw new Error('WhatsApp credentials not found');
     }
 
+    this.logger.debug(`📤 Sending WhatsApp message to ${recipientPhone} via Phone Number ID: ${phoneNumberId}`);
+
+    // ส่ง text message
     await axios.post(
       `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
       {
@@ -941,5 +1033,13 @@ export class MessagingService {
         },
       },
     );
+
+    // ถ้ามีรูปภาพ ส่งต่อ
+    if (imageUrl) {
+      // WhatsApp ต้อง upload image ก่อน แล้วส่ง media_id
+      // หรือส่ง link URL โดยตรง (ถ้า host รูปบน server)
+      // สำหรับ demo จะส่งแค่ text ก่อน (ต้อง implement image upload)
+      this.logger.log('🔸 WhatsApp image sending requires media upload - currently sending text only');
+    }
   }
 }
