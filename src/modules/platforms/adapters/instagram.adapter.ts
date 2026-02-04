@@ -29,8 +29,23 @@ export class InstagramAdapter {
       const senderId = messaging.sender?.id;
       const recipientId = messaging.recipient?.id; // Instagram Account ID - ใช้หา organization
       const messageId = messaging.message?.mid;
-      const messageText = messaging.message?.text || '';
+      let messageText = messaging.message?.text || '';
       const attachments = messaging.message?.attachments || [];
+      let contentType = 'text';
+      let imageUrl: string | undefined = undefined;
+
+      // Check for image attachment
+      if (attachments.length > 0) {
+        const attachment = attachments[0];
+        if (attachment.type === 'image') {
+          imageUrl = attachment.payload?.url;
+          messageText = messageText || '[Image]';
+          contentType = 'image';
+        } else {
+          contentType = attachment.type;
+          messageText = messageText || `[${attachment.type}]`;
+        }
+      }
 
       if (!senderId || !messageId || !recipientId) {
         this.logger.warn('⚠️ Missing required fields: senderId, messageId, or recipientId');
@@ -44,8 +59,9 @@ export class InstagramAdapter {
         recipientId: recipientId, // Instagram Account ID
         externalCustomerId: senderId,
         messageId: messageId,
-        content: messageText || (attachments.length > 0 ? '[Attachment]' : ''),
-        contentType: attachments.length > 0 ? attachments[0].type : 'text',
+        content: messageText,
+        contentType: contentType,
+        ...(imageUrl && { imageUrl }),
         raw: payload,
       };
     }

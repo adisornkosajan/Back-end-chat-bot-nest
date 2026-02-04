@@ -25,6 +25,7 @@ export class WhatsAppAdapter {
     // Get message content based on type
     let messageText = '';
     let contentType = messageType;
+    let imageId: string | undefined = undefined;
 
     switch (messageType) {
       case 'text':
@@ -33,6 +34,7 @@ export class WhatsAppAdapter {
       case 'image':
         messageText = message.image?.caption || '[Image]';
         contentType = 'image';
+        imageId = message.image?.id;
         break;
       case 'video':
         messageText = message.video?.caption || '[Video]';
@@ -91,6 +93,7 @@ export class WhatsAppAdapter {
       messageId: messageId,
       content: messageText,
       contentType: contentType,
+      ...(imageId && { imageId }),
       raw: payload,
     };
   }

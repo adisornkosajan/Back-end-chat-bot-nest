@@ -80,7 +80,7 @@ async function main() {
       organizationId: org.id,
       platformId: platform.id,
       customerId: customer.id,
-      status: 'open',
+      status: 'OPEN',
     },
   });
   console.log('✅ Conversation created');

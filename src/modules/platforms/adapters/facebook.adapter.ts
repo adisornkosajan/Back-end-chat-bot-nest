@@ -25,7 +25,19 @@ export class FacebookAdapter {
     const senderId = messaging.sender?.id;
     const recipientId = messaging.recipient?.id; // Page ID - ใช้หา organization
     const messageId = messaging.message?.mid;
-    const messageText = messaging.message?.text || '';
+    let messageText = messaging.message?.text || '';
+    let contentType = 'text';
+    let imageUrl: string | undefined = undefined;
+
+    // Check for image attachment
+    if (messaging.message?.attachments?.[0]) {
+      const attachment = messaging.message.attachments[0];
+      if (attachment.type === 'image') {
+        imageUrl = attachment.payload?.url;
+        messageText = messageText || '[Image]';
+        contentType = 'image';
+      }
+    }
 
     if (!senderId || !messageId || !recipientId) {
       this.logger.warn('⚠️ Missing required fields: senderId, messageId, or recipientId');
@@ -40,7 +52,8 @@ export class FacebookAdapter {
       externalCustomerId: senderId,
       messageId: messageId,
       content: messageText,
-      contentType: 'text',
+      contentType: contentType,
+      ...(imageUrl && { imageUrl }),
       raw: payload,
     };
   }

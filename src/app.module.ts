@@ -18,6 +18,8 @@ import { WebhookModule } from './modules/webhooks/webhook.module';
 import { AiModule } from './modules/ai/ai.module';
 import { PluginsModule } from './modules/plugins/plugins.module';
 import { NotesModule } from './modules/notes/notes.module';
+import { QuickRepliesModule } from './modules/quick-replies/quick-replies.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 
 @Module({
   imports: [
@@ -37,6 +39,8 @@ import { NotesModule } from './modules/notes/notes.module';
     AiModule,
     PluginsModule,
     NotesModule,
+    QuickRepliesModule,
+    AnalyticsModule,
   ],
 })
 export class AppModule {}

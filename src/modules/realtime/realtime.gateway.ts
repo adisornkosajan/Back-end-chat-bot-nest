@@ -137,4 +137,15 @@ export class RealtimeGateway
       console.log('❌ Cannot emit: Socket.IO server not available');
     }
   }
+
+  notifyConversationUpdate(orgId: string, conversation: any) {
+    if (!this.server) {
+      console.log('❌ Cannot emit conversation:update: Socket.IO server not available');
+      return;
+    }
+
+    this.server.to(`org:${orgId}`).emit('conversation:update', {
+      conversation,
+    });
+  }
 }

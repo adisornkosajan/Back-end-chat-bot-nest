@@ -25,7 +25,9 @@ export class CustomerSummaryService {
     },
     userId: string,
   ) {
-    // Note: userId is optional, will be undefined if not available
+    if (!userId) {
+      throw new Error('User ID is required to create customer summary');
+    }
     
     // Check if summary already exists
     const existing = await this.prisma.customerSummary.findFirst({
@@ -50,11 +52,8 @@ export class CustomerSummaryService {
         organizationId,
         conversationId,
         ...data,
+        createdBy: userId,
       };
-      
-      if (userId) {
-        createData.createdBy = userId;
-      }
       
       return this.prisma.customerSummary.create({
         data: createData,

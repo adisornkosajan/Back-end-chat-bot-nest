@@ -16,6 +16,13 @@ enum UserRole {
   USER
 }
 
+enum ConversationStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
 model User {
   id             String         @id @default(uuid())
   email          String         @unique
@@ -45,6 +52,7 @@ model Organization {
   invitations      Invitation[]
   notes            Note[]
   customerSummaries CustomerSummary[]
+  quickReplies     QuickReply[]
 
   @@map("organizations")
 }
@@ -95,7 +103,7 @@ model Conversation {
   platform         Platform         @relation(fields: [platformId], references: [id], onDelete: Cascade)
   customerId       String
   customer         Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  status           String           @default("open") // open, closed, archived
+  status           ConversationStatus @default(OPEN)
   assignedAgentId  String?          // Agent assigned to this conversation
   requestHuman     Boolean          @default(false) // Customer requested human agent
   firstResponseAt  DateTime?        // When agent first responded
@@ -121,6 +129,7 @@ model Message {
   platformMessageId String?
   content           String       @db.LongText // Support very long messages (up to 4GB)
   contentType       String       @default("text") // text, image, video, audio, file
+  imageUrl          String?      @db.LongText // URL or base64 for image attachments
   rawPayload        Json?
   sentAt            DateTime     @default(now())
   createdAt         DateTime     @default(now())
@@ -240,4 +249,20 @@ model CustomerSummary {
   @@index([organizationId])
   @@index([conversationId])
   @@map("customer_summaries")
+}
+
+model QuickReply {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  shortcut       String       // e.g., "/hello", "/thanks", "/faq1"
+  content        String       @db.Text // The actual message content
+  category       String       @default("general") // greeting, closing, faq, support, sales, etc.
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, shortcut])
+  @@index([organizationId])
+  @@map("quick_replies")
 }

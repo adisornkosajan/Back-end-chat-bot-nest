@@ -24,6 +24,8 @@ export class MessagingService {
     messageId: string;
     content: string;
     contentType: string;
+    imageUrl?: string; // For Facebook
+    imageId?: string; // For WhatsApp
     raw: any;
   }) {
     this.logger.log(`💬 Processing inbound message from ${data.platform}`);
@@ -125,16 +127,74 @@ export class MessagingService {
     }
 
     this.logger.log(`📝 Creating message in conversation: ${conversation.id}`);
+    
+    // Download and convert image to base64 if imageUrl or imageId provided
+    let imageBase64: string | null = null;
+    
+    if (data.imageUrl) {
+      // Facebook/Instagram - download from URL
+      try {
+        this.logger.debug(`📥 Downloading image from URL: ${data.imageUrl}`);
+        const imageResponse = await axios.get(data.imageUrl, {
+          responseType: 'arraybuffer',
+        });
+        const buffer = Buffer.from(imageResponse.data, 'binary');
+        const contentType = imageResponse.headers['content-type'] || 'image/jpeg';
+        imageBase64 = `data:${contentType};base64,${buffer.toString('base64')}`;
+        this.logger.debug(`✅ Image downloaded and converted to base64`);
+      } catch (error) {
+        this.logger.error(`❌ Failed to download image: ${error.message}`);
+      }
+    } else if (data.imageId && platform.accessToken) {
+      // WhatsApp - download using Media ID
+      try {
+        this.logger.debug(`📥 Downloading WhatsApp image with ID: ${data.imageId}`);
+        
+        // First, get the media URL
+        const mediaResponse = await axios.get(
+          `https://graph.facebook.com/v19.0/${data.imageId}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${platform.accessToken}`,
+            },
+          },
+        );
+        
+        const mediaUrl = mediaResponse.data.url;
+        
+        // Then download the actual media
+        const imageResponse = await axios.get(mediaUrl, {
+          headers: {
+            'Authorization': `Bearer ${platform.accessToken}`,
+          },
+          responseType: 'arraybuffer',
+        });
+        
+        const buffer = Buffer.from(imageResponse.data, 'binary');
+        const contentType = imageResponse.headers['content-type'] || 'image/jpeg';
+        imageBase64 = `data:${contentType};base64,${buffer.toString('base64')}`;
+        this.logger.debug(`✅ WhatsApp image downloaded and converted to base64`);
+      } catch (error) {
+        this.logger.error(`❌ Failed to download WhatsApp image: ${error.message}`);
+      }
+    }
+    
+    const messageData: any = {
+      organizationId: platform.organizationId,
+      conversationId: conversation.id,
+      senderType: 'customer',
+      platformMessageId: data.messageId,
+      content: data.content,
+      contentType: data.contentType,
+      rawPayload: data.raw,
+    };
+    
+    if (imageBase64) {
+      messageData.imageUrl = imageBase64;
+    }
+    
     const message = await this.prisma.message.create({
-      data: {
-        organizationId: platform.organizationId,
-        conversationId: conversation.id,
-        senderType: 'customer',
-        platformMessageId: data.messageId,
-        content: data.content,
-        contentType: data.contentType,
-        rawPayload: data.raw,
-      },
+      data: messageData,
     });
 
     await this.prisma.conversation.update({
@@ -217,7 +277,8 @@ export class MessagingService {
     organizationId: string,
     conversationId: string,
     content: string,
-    agentId:any
+    agentId: any,
+    file?: Express.Multer.File,
   ) {
     const conversation = await this.prisma.conversation.findFirst({
       where: {
@@ -241,7 +302,7 @@ export class MessagingService {
         where: { id: conversationId },
         data: { 
           assignedAgentId: agentId,
-          status: 'pending',
+          status: 'IN_PROGRESS',
         },
       });
     }
@@ -258,49 +319,141 @@ export class MessagingService {
     const recipientId = conversation.customer.externalId;
     const platformType = conversation.platform.type;
 
+    let imageUrl: string | null = null;
+
     // 1️⃣ ส่งไปยัง Platform
     try {
-      if (platformType === 'facebook') {
-        await axios.post(
-          'https://graph.facebook.com/v19.0/me/messages',
-          {
-            recipient: { id: recipientId },
-            message: { text: content },
-          },
-          {
-            params: { access_token: pageToken },
-          },
-        );
-      } else if (platformType === 'instagram') {
-        await axios.post(
-          'https://graph.facebook.com/v19.0/me/messages',
-          {
-            recipient: { id: recipientId },
-            message: { text: content },
-          },
-          {
-            params: { access_token: pageToken },
-          },
-        );
-      } else if (platformType === 'whatsapp') {
-        const phoneNumberId = conversation.platform.pageId; // pageId stores phoneNumberId for WhatsApp
-        await axios.post(
-          `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
-          {
-            messaging_product: 'whatsapp',
-            to: recipientId,
-            type: 'text',
-            text: { body: content },
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${pageToken}`,
-              'Content-Type': 'application/json',
+      if (file) {
+        // Convert image to base64 for storage
+        const base64Image = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+        imageUrl = base64Image;
+
+        // Upload image to platform
+        if (platformType === 'facebook' || platformType === 'instagram') {
+          // For Facebook/Instagram, we need to send as attachment
+          const FormData = require('form-data');
+          const formData = new FormData();
+          formData.append('recipient', JSON.stringify({ id: recipientId }));
+          formData.append('message', JSON.stringify({
+            attachment: {
+              type: 'image',
+              payload: {
+                is_reusable: true
+              }
+            }
+          }));
+          formData.append('filedata', file.buffer, {
+            filename: file.originalname,
+            contentType: file.mimetype,
+          });
+
+          await axios.post(
+            'https://graph.facebook.com/v19.0/me/messages',
+            formData,
+            {
+              params: { access_token: pageToken },
+              headers: formData.getHeaders(),
             },
-          },
-        );
+          );
+
+          // Send text if provided
+          if (content) {
+            await axios.post(
+              'https://graph.facebook.com/v19.0/me/messages',
+              {
+                recipient: { id: recipientId },
+                message: { text: content },
+              },
+              {
+                params: { access_token: pageToken },
+              },
+            );
+          }
+        } else if (platformType === 'whatsapp') {
+          const phoneNumberId = conversation.platform.pageId;
+          const FormData = require('form-data');
+          const formData = new FormData();
+          formData.append('messaging_product', 'whatsapp');
+          formData.append('file', file.buffer, {
+            filename: file.originalname,
+            contentType: file.mimetype,
+          });
+
+          // Upload image first
+          const uploadResponse = await axios.post(
+            `https://graph.facebook.com/v19.0/${phoneNumberId}/media`,
+            formData,
+            {
+              headers: {
+                ...formData.getHeaders(),
+                'Authorization': `Bearer ${pageToken}`,
+              },
+            },
+          );
+
+          const mediaId = uploadResponse.data.id;
+
+          // Send image message
+          await axios.post(
+            `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
+            {
+              messaging_product: 'whatsapp',
+              to: recipientId,
+              type: 'image',
+              image: { id: mediaId, caption: content || '' },
+            },
+            {
+              headers: {
+                'Authorization': `Bearer ${pageToken}`,
+                'Content-Type': 'application/json',
+              },
+            },
+          );
+        }
       } else {
-        throw new Error(`Platform ${platformType} not supported yet`);
+        // Text only message
+        if (platformType === 'facebook') {
+          await axios.post(
+            'https://graph.facebook.com/v19.0/me/messages',
+            {
+              recipient: { id: recipientId },
+              message: { text: content },
+            },
+            {
+              params: { access_token: pageToken },
+            },
+          );
+        } else if (platformType === 'instagram') {
+          await axios.post(
+            'https://graph.facebook.com/v19.0/me/messages',
+            {
+              recipient: { id: recipientId },
+              message: { text: content },
+            },
+            {
+              params: { access_token: pageToken },
+            },
+          );
+        } else if (platformType === 'whatsapp') {
+          const phoneNumberId = conversation.platform.pageId;
+          await axios.post(
+            `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
+            {
+              messaging_product: 'whatsapp',
+              to: recipientId,
+              type: 'text',
+              text: { body: content },
+            },
+            {
+              headers: {
+                'Authorization': `Bearer ${pageToken}`,
+                'Content-Type': 'application/json',
+              },
+            },
+          );
+        } else {
+          throw new Error(`Platform ${platformType} not supported yet`);
+        }
       }
     } catch (err: any) {
       this.logger.error(`❌ ${platformType.toUpperCase()} Send Error`);
@@ -309,13 +462,19 @@ export class MessagingService {
     }
 
     // 2️⃣ บันทึก message
+    const messageData: any = {
+      organizationId,
+      conversationId,
+      senderType: 'agent',
+      content,
+    };
+
+    if (imageUrl) {
+      messageData.imageUrl = imageUrl;
+    }
+
     const message = await this.prisma.message.create({
-      data: {
-        organizationId,
-        conversationId,
-        senderType: 'agent',
-        content,
-      },
+      data: messageData,
     });
 
     // 3️⃣ Realtime broadcast
@@ -431,7 +590,7 @@ export class MessagingService {
                 organizationId,
                 platformId: platform.id,
                 customerId: dbCustomer.id,
-                status: 'open',
+                status: 'OPEN',
               },
             });
             syncedCount.conversations++;
@@ -581,7 +740,7 @@ export class MessagingService {
         },
         data: {
           assignedAgentId: null,
-          status: 'open',
+          status: 'OPEN',
         },
       });
     }
@@ -605,7 +764,7 @@ export class MessagingService {
       },
       data: {
         assignedAgentId: agentId,
-        status: 'pending',
+        status: 'IN_PROGRESS',
       },
     });
   }
