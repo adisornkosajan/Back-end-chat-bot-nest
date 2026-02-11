@@ -20,6 +20,9 @@ import { PluginsModule } from './modules/plugins/plugins.module';
 import { NotesModule } from './modules/notes/notes.module';
 import { QuickRepliesModule } from './modules/quick-replies/quick-replies.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { LicensingModule } from './modules/licensing/licensing.module';
+import { BillingModule } from './modules/billing/billing.module';
+import { PlatformAdminModule } from './modules/platform-admin/platform-admin.module';
 
 @Module({
   imports: [
@@ -41,6 +44,9 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
     NotesModule,
     QuickRepliesModule,
     AnalyticsModule,
+    LicensingModule,
+    BillingModule,
+    PlatformAdminModule,
   ],
 })
 export class AppModule {}

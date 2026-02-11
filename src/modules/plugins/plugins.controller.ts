@@ -16,9 +16,12 @@ import { PluginEngineService } from './plugin-engine.service';
 import { QRCodeService } from './qrcode.service';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles, UserRole } from '../../common/decorators/roles.decorator';
+import { FeatureGuard } from '../../common/guards/feature.guard';
+import { RequireFeature } from '../../common/decorators/feature.decorator';
 
 @Controller('plugins')
-@UseGuards(AuthGuard('jwt'), RolesGuard)
+@UseGuards(AuthGuard('jwt'), RolesGuard, FeatureGuard)
+@RequireFeature('PLUGINS')
 export class PluginsController {
   constructor(
     private pluginsService: PluginsService,

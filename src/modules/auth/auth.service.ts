@@ -94,6 +94,7 @@ export class AuthService {
       sub: result.user.id,
       organizationId: result.user.organizationId,
       role: result.user.role,
+      platformRole: result.user.platformRole,
     };
 
     this.logger.debug(`🎟️ JWT Payload: userId=${payload.sub}, orgId=${payload.organizationId}, role=${payload.role}`);
@@ -105,6 +106,7 @@ export class AuthService {
         email: result.user.email,
         name: result.user.name,
         role: result.user.role,
+        platformRole: result.user.platformRole,
         organizationId: result.user.organizationId,
       },
       organization: {
@@ -139,6 +141,7 @@ export class AuthService {
       sub: user.id,
       organizationId: user.organizationId,
       role: user.role,
+      platformRole: user.platformRole,
     };
 
     this.logger.debug(`🎟️ JWT Payload: userId=${payload.sub}, orgId=${payload.organizationId}, role=${payload.role}`);
@@ -150,6 +153,7 @@ export class AuthService {
         email: user.email,
         name: user.name,
         role: user.role,
+        platformRole: user.platformRole,
         organizationId: user.organizationId,
       },
     };
@@ -239,6 +243,7 @@ export class AuthService {
       sub: result.user.id,
       organizationId: result.user.organizationId,
       role: result.user.role,
+      platformRole: result.user.platformRole,
     };
 
     return {
@@ -248,6 +253,7 @@ export class AuthService {
         email: result.user.email,
         name: result.user.name,
         role: result.user.role,
+        platformRole: result.user.platformRole,
         organizationId: result.user.organizationId,
       },
       organization: {

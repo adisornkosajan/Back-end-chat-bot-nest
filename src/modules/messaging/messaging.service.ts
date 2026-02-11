@@ -295,8 +295,13 @@ export class MessagingService {
       throw new Error('Conversation not found');
     }
 
+    const text = typeof content === 'string' ? content.trim() : '';
+    if (!file && !text) {
+      throw new Error('Message content is required');
+    }
+
     // Auto-assign conversation to agent if not assigned yet
-    if (!conversation.assignedAgentId) {
+    if (!conversation.assignedAgentId && agentId) {
       this.logger.log(`🎯 Auto-assigning conversation ${conversationId} to agent ${agentId}`);
       await this.prisma.conversation.update({
         where: { id: conversationId },
@@ -333,6 +338,7 @@ export class MessagingService {
           // For Facebook/Instagram, we need to send as attachment
           const FormData = require('form-data');
           const formData = new FormData();
+          formData.append('messaging_type', 'RESPONSE');
           formData.append('recipient', JSON.stringify({ id: recipientId }));
           formData.append('message', JSON.stringify({
             attachment: {
@@ -357,12 +363,13 @@ export class MessagingService {
           );
 
           // Send text if provided
-          if (content) {
+          if (text) {
             await axios.post(
               'https://graph.facebook.com/v19.0/me/messages',
               {
+                messaging_type: 'RESPONSE',
                 recipient: { id: recipientId },
-                message: { text: content },
+                message: { text },
               },
               {
                 params: { access_token: pageToken },
@@ -416,8 +423,9 @@ export class MessagingService {
           await axios.post(
             'https://graph.facebook.com/v19.0/me/messages',
             {
-              recipient: { id: recipientId },
-              message: { text: content },
+              messaging_type: 'RESPONSE',
+                recipient: { id: recipientId },
+                message: { text },
             },
             {
               params: { access_token: pageToken },
@@ -427,8 +435,9 @@ export class MessagingService {
           await axios.post(
             'https://graph.facebook.com/v19.0/me/messages',
             {
-              recipient: { id: recipientId },
-              message: { text: content },
+              messaging_type: 'RESPONSE',
+                recipient: { id: recipientId },
+                message: { text },
             },
             {
               params: { access_token: pageToken },
@@ -442,7 +451,7 @@ export class MessagingService {
               messaging_product: 'whatsapp',
               to: recipientId,
               type: 'text',
-              text: { body: content },
+              text: { body: text },
             },
             {
               headers: {
@@ -457,7 +466,7 @@ export class MessagingService {
       }
     } catch (err: any) {
       this.logger.error(`❌ ${platformType.toUpperCase()} Send Error`);
-      this.logger.error(err.response?.data || err.message);
+      this.logger.error(JSON.stringify({ status: err?.response?.status, data: err?.response?.data, message: err?.message }));
       throw err;
     }
 
@@ -466,7 +475,7 @@ export class MessagingService {
       organizationId,
       conversationId,
       senderType: 'agent',
-      content,
+      content: text,
     };
 
     if (imageUrl) {
@@ -1039,6 +1048,7 @@ export class MessagingService {
       await axios.post(
         'https://graph.facebook.com/v19.0/me/messages',
         {
+          messaging_type: 'RESPONSE',
           recipient: { id: recipientId },
           message: { text: message },
         },
@@ -1056,6 +1066,7 @@ export class MessagingService {
       // Upload เป็น attachment
       const FormData = require('form-data');
       const form = new FormData();
+      form.append('messaging_type', 'RESPONSE');
       form.append('recipient', JSON.stringify({ id: recipientId }));
       form.append('message', JSON.stringify({
         attachment: {
@@ -1081,6 +1092,7 @@ export class MessagingService {
       await axios.post(
         'https://graph.facebook.com/v19.0/me/messages',
         {
+          messaging_type: 'RESPONSE',
           recipient: { id: recipientId },
           message: { text: message },
         },
@@ -1110,6 +1122,7 @@ export class MessagingService {
       await axios.post(
         'https://graph.facebook.com/v19.0/me/messages',
         {
+          messaging_type: 'RESPONSE',
           recipient: { id: recipientId },
           message: { text: message },
         },
@@ -1123,6 +1136,7 @@ export class MessagingService {
       
       const FormData = require('form-data');
       const form = new FormData();
+      form.append('messaging_type', 'RESPONSE');
       form.append('recipient', JSON.stringify({ id: recipientId }));
       form.append('message', JSON.stringify({
         attachment: {
@@ -1147,6 +1161,7 @@ export class MessagingService {
       await axios.post(
         'https://graph.facebook.com/v19.0/me/messages',
         {
+          messaging_type: 'RESPONSE',
           recipient: { id: recipientId },
           message: { text: message },
         },
@@ -1202,3 +1217,4 @@ export class MessagingService {
     }
   }
 }
+

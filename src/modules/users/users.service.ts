@@ -59,6 +59,7 @@ export class UsersService {
         name: true,
         email: true,
         role: true,
+        platformRole: true,
       },
     });
   }

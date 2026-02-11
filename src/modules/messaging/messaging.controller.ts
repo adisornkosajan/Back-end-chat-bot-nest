@@ -65,7 +65,8 @@ export class MessagingController {
     @Body() body: { conversationId: string; content: string; agentId: any },
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    const { conversationId, content, agentId } = body;
+    const { conversationId, content } = body;
+    const agentId = body.agentId || req.user?.id || req.user?.userId || req.user?.sub;
     console.log('Sending message to conversation:', conversationId);
     console.log('File uploaded:', file ? file.originalname : 'No file');
     return this.messaging.sendAgentMessage(

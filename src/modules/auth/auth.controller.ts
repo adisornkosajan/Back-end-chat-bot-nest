@@ -76,6 +76,7 @@ export class AuthController {
         email: user.email,
         name: user.name,
         role: user.role,
+        platformRole: user.platformRole || 'NONE',
         organizationId: user.organizationId,
       };
     } catch (error) {

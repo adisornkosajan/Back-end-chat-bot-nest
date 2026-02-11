@@ -23,6 +23,26 @@ enum ConversationStatus {
   CLOSED
 }
 
+enum PlanTier {
+  TRIAL
+  BASIC
+  PRO
+  ENTERPRISE
+}
+
+enum LicenseStatus {
+  ACTIVE
+  SUSPENDED
+  EXPIRED
+  CANCELED
+}
+
+enum PlatformRole {
+  NONE
+  OWNER
+  SUPPORT_ADMIN
+}
+
 model User {
   id             String         @id @default(uuid())
   email          String         @unique
@@ -31,6 +51,7 @@ model User {
   organizationId String
   organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   role           UserRole       @default(USER)
+  platformRole   PlatformRole   @default(NONE)
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   notes          Note[]         // Notes created by this user
@@ -53,6 +74,8 @@ model Organization {
   notes            Note[]
   customerSummaries CustomerSummary[]
   quickReplies     QuickReply[]
+  licenses         License[]
+  invoices         Invoice[]
 
   @@map("organizations")
 }
@@ -265,4 +288,50 @@ model QuickReply {
   @@unique([organizationId, shortcut])
   @@index([organizationId])
   @@map("quick_replies")
+}
+
+model License {
+  id              String        @id @default(uuid())
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  licenseKey      String        @unique
+  plan            PlanTier      @default(TRIAL)
+  status          LicenseStatus @default(ACTIVE)
+  seats           Int           @default(1)
+  usedSeats       Int           @default(1)
+  messageQuota    Int           @default(1000)
+  messageUsed     Int           @default(0)
+  periodStart     DateTime      @default(now())
+  expiresAt       DateTime
+  activatedAt     DateTime?
+  suspendedReason String?
+  createdBy       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  invoices        Invoice[]
+
+  @@index([organizationId, status])
+  @@map("licenses")
+}
+
+model Invoice {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  licenseId      String?
+  license        License?     @relation(fields: [licenseId], references: [id], onDelete: SetNull)
+  provider       String
+  providerRef    String?
+  amountCents    Int
+  currency       String       @default("THB")
+  status         String       @default("pending") // pending, paid, failed, canceled
+  periodStart    DateTime
+  periodEnd      DateTime
+  paidAt         DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, status])
+  @@index([providerRef])
+  @@map("invoices")
 }
