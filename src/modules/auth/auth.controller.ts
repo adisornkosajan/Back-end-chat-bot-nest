@@ -4,6 +4,7 @@ import {
   Post,
   Get,
   Query,
+  Param,
   Logger,
   UseGuards,
   Req,
@@ -29,49 +30,28 @@ export class AuthController {
       organizationName: string;
     },
   ) {
-    this.logger.log(`📝 Registration attempt for email: ${body.email}`);
-    this.logger.debug(
-      `📦 Request body received:`,
-      JSON.stringify(body, null, 2),
-    );
-    this.logger.debug(
-      `📊 Field check - email: "${body.email}", password: ${body.password ? 'exists' : 'missing'}, name: "${body.name}", org: "${body.organizationName}"`,
-    );
+    this.logger.log(`Registration attempt for email: ${body.email}`);
 
     try {
       const result = await this.authService.register(body);
-      this.logger.log(`✅ Registration successful for user: ${result.user.id}`);
+      this.logger.log(`Registration successful for user: ${result.user.id}`);
       return result;
     } catch (error) {
-      this.logger.error(
-        `❌ Registration failed for email: ${body.email}`,
-        error.message,
-      );
+      this.logger.error(`Registration failed for email: ${body.email}`, error.message);
       throw error;
     }
   }
 
   @Post('login')
-  async login(
-    @Body() body: { email: string; password: string },
-    @Req() req: any,
-  ) {
-    this.logger.log(`🔐 Login attempt for email: ${body.email}`);
+  async login(@Body() body: { email: string; password: string }) {
+    this.logger.log(`Login attempt for email: ${body.email}`);
     try {
-      const user = await this.authService.validateUser(
-        body.email,
-        body.password,
-      );
+      const user = await this.authService.validateUser(body.email, body.password);
       const result = await this.authService.login(user);
-      this.logger.log(
-        `✅ Login successful for user: ${user.id} header ${JSON.stringify(req.headers)}`,
-      );
+      this.logger.log(`Login successful for user: ${user.id}`);
       return result;
     } catch (error) {
-      this.logger.error(
-        `❌ Login failed for email: ${body.email}`,
-        error.message,
-      );
+      this.logger.error(`Login failed for email: ${body.email}`, error.message);
       throw error;
     }
   }
@@ -81,16 +61,16 @@ export class AuthController {
   async getCurrentUser(@Req() req: any) {
     const userId = req.user.userId || req.user.sub;
     const organizationId = req.user.organizationId;
-    
-    this.logger.log(`👤 Getting current user: ${userId}`);
-    
+
+    this.logger.log(`Getting current user: ${userId}`);
+
     try {
       const user = await this.authService.getUserById(userId, organizationId);
-      
+
       if (!user) {
         throw new Error('User not found');
       }
-      
+
       return {
         id: user.id,
         email: user.email,
@@ -99,7 +79,7 @@ export class AuthController {
         organizationId: user.organizationId,
       };
     } catch (error) {
-      this.logger.error(`❌ Failed to get current user:`, error.message);
+      this.logger.error('Failed to get current user:', error.message);
       throw error;
     }
   }
@@ -111,18 +91,14 @@ export class AuthController {
     const userId = req.user.userId;
 
     if (!organizationId) {
-      this.logger.error(
-        `❌ No organizationId found for user: ${userId} header ${JSON.stringify(req.headers)}`,
-      );
+      this.logger.error(`No organizationId found for user: ${userId}`);
       throw new Error('User has no organization');
     }
 
     const state = `${organizationId}:${Date.now()}`;
     const url = this.authService.buildOAuthUrl(state);
 
-    this.logger.log(
-      `🔗 OAuth URL generated for user: ${userId}, org: ${organizationId}`,
-    );
+    this.logger.log(`OAuth URL generated for user: ${userId}, org: ${organizationId}`);
     return { url, state, organizationId };
   }
 
@@ -132,18 +108,16 @@ export class AuthController {
     @Query('state') state: string,
     @Res() res: Response,
   ) {
-    this.logger.log(`📥 OAuth callback received with state: ${state}`);
+    this.logger.log(`OAuth callback received with state: ${state}`);
     try {
-      const result = await this.authService.handleOAuthCallback(code, state);
-      this.logger.log(`✅ OAuth callback processed successfully`);
+      await this.authService.handleOAuthCallback(code, state);
+      this.logger.log('OAuth callback processed successfully');
 
-      // Redirect กลับไปที่ frontend connections page
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       res.redirect(`${frontendUrl}/dashboard/connections?oauth=success`);
     } catch (error) {
-      this.logger.error(`❌ OAuth callback failed:`, error.message);
+      this.logger.error('OAuth callback failed:', error.message);
 
-      // Redirect กลับไปพร้อม error message
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       res.redirect(
         `${frontendUrl}/dashboard/connections?oauth=error&message=${encodeURIComponent(error.message)}`,
@@ -156,14 +130,14 @@ export class AuthController {
    * Get invitation details (for preview page)
    */
   @Get('invitation/:token')
-  async getInvitation(@Query('token') token: string) {
-    this.logger.log(`📬 Getting invitation details for token`);
+  async getInvitation(@Param('token') token: string) {
+    this.logger.log('Getting invitation details for token');
     try {
       const invitation = await this.authService.getInvitation(token);
-      this.logger.log(`✅ Invitation found for email: ${invitation.email}`);
+      this.logger.log(`Invitation found for email: ${invitation.email}`);
       return invitation;
     } catch (error) {
-      this.logger.error(`❌ Failed to get invitation:`, error.message);
+      this.logger.error('Failed to get invitation:', error.message);
       throw error;
     }
   }
@@ -176,15 +150,13 @@ export class AuthController {
   async acceptInvite(
     @Body() body: { token: string; name: string; password: string },
   ) {
-    this.logger.log(`💌 Accepting invitation`);
+    this.logger.log('Accepting invitation');
     try {
       const result = await this.authService.acceptInvitation(body);
-      this.logger.log(
-        `✅ Invitation accepted, user created: ${result.user.id}`,
-      );
+      this.logger.log(`Invitation accepted, user created: ${result.user.id}`);
       return result;
     } catch (error) {
-      this.logger.error(`❌ Failed to accept invitation:`, error.message);
+      this.logger.error('Failed to accept invitation:', error.message);
       throw error;
     }
   }

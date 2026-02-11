@@ -27,7 +27,7 @@ export class MessagingService {
     imageUrl?: string; // For Facebook
     imageId?: string; // For WhatsApp
     raw: any;
-  }) {
+  }) { await
     this.logger.log(`💬 Processing inbound message from ${data.platform}`);
     this.logger.debug(
       `Customer: ${data.externalCustomerId}, Content: ${data.content.substring(0, 50)}...`,

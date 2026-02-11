@@ -1,8 +1,11 @@
 import { Controller, Post, Get, Put, Body, Param, UseGuards, Req } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { OrganizationsService } from './organizations.service';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles, UserRole } from '../../common/decorators/roles.decorator';
 
 @Controller('organizations')
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 export class OrganizationsController {
   constructor(private readonly organizationsService: OrganizationsService) {}
 
@@ -11,7 +14,6 @@ export class OrganizationsController {
    * Get current user's organization
    */
   @Get('current')
-  @UseGuards(AuthGuard('jwt'))
   async getCurrentOrganization(@Req() req: any) {
     return this.organizationsService.findById(req.user.organizationId);
   }
@@ -21,7 +23,7 @@ export class OrganizationsController {
    * Update current user's organization
    */
   @Put('current')
-  @UseGuards(AuthGuard('jwt'))
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   async updateCurrentOrganization(
     @Req() req: any,
     @Body() body: { name?: string; description?: string },
@@ -35,6 +37,7 @@ export class OrganizationsController {
    * สำหรับผู้ให้บริการที่ขายแอปให้องค์กร
    */
   @Post()
+  @Roles(UserRole.ADMIN)
   async createOrganization(
     @Body()
     body: {
@@ -54,6 +57,7 @@ export class OrganizationsController {
    * ไม่ต้องผ่าน invitation system
    */
   @Post(':id/users')
+  @Roles(UserRole.ADMIN)
   async addUser(
     @Param('id') organizationId: string,
     @Body()
@@ -72,6 +76,7 @@ export class OrganizationsController {
    * ดูรายการ organization ทั้งหมด (สำหรับ super admin)
    */
   @Get()
+  @Roles(UserRole.ADMIN)
   async getAllOrganizations() {
     return this.organizationsService.getAllOrganizations();
   }
@@ -81,6 +86,7 @@ export class OrganizationsController {
    * ดูข้อมูล organization
    */
   @Get(':id')
+  @Roles(UserRole.ADMIN)
   async getOrganization(@Param('id') id: string) {
     return this.organizationsService.findById(id);
   }
