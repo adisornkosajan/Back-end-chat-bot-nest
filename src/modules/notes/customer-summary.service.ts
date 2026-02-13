@@ -18,6 +18,37 @@ export class CustomerSummaryService {
     });
   }
 
+  async getHistory(organizationId: string, conversationId: string) {
+    const summary = await this.prisma.customerSummary.findFirst({
+      where: {
+        organizationId,
+        conversationId,
+      },
+    });
+
+    if (!summary) {
+      return [];
+    }
+
+    return this.prisma.customerSummaryHistory.findMany({
+      where: {
+        summaryId: summary.id,
+      },
+      include: {
+        editor: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: {
+        editedAt: 'desc',
+      },
+    });
+  }
+
   async upsert(
     organizationId: string,
     conversationId: string,
@@ -42,6 +73,17 @@ export class CustomerSummaryService {
     });
 
     if (existing) {
+      await this.prisma.customerSummaryHistory.create({
+        data: {
+          summaryId: existing.id,
+          name: existing.name,
+          mobile: existing.mobile,
+          email: existing.email,
+          importantKey: existing.importantKey,
+          editedBy: userId,
+        },
+      });
+
       // Update existing summary
       return this.prisma.customerSummary.update({
         where: { id: existing.id },

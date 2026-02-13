@@ -57,6 +57,7 @@ model User {
   updatedAt      DateTime       @updatedAt
   notes          Note[]         // Notes created by this user
   noteEdits      NoteHistory[]  // Note edits made by this user
+  summaryEdits   CustomerSummaryHistory[] // Customer summary edits made by this user
 
   @@map("users")
 }
@@ -269,10 +270,28 @@ model CustomerSummary {
   createdBy      String?       // User ID who created this summary
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
+  history        CustomerSummaryHistory[]
 
   @@index([organizationId])
   @@index([conversationId])
   @@map("customer_summaries")
+}
+
+model CustomerSummaryHistory {
+  id           String          @id @default(uuid())
+  summaryId    String
+  summary      CustomerSummary @relation(fields: [summaryId], references: [id], onDelete: Cascade)
+  name         String?
+  mobile       String?
+  email        String?
+  importantKey String?         @db.Text
+  editedBy     String
+  editor       User            @relation(fields: [editedBy], references: [id], onDelete: Cascade)
+  editedAt     DateTime        @default(now())
+
+  @@index([summaryId])
+  @@index([editedBy])
+  @@map("customer_summary_history")
 }
 
 model QuickReply {

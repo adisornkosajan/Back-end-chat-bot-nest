@@ -24,6 +24,14 @@ export class CustomerSummaryController {
     );
   }
 
+  @Get('conversation/:conversationId/history')
+  async getHistory(@Req() req: any, @Param('conversationId') conversationId: string) {
+    return this.customerSummaryService.getHistory(
+      req.user.organizationId,
+      conversationId,
+    );
+  }
+
   @Post('conversation/:conversationId')
   async upsertSummary(
     @Req() req: any,
