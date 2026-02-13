@@ -1,6 +1,6 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { UserRole } from '../../common/decorators/roles.decorator';
+import { UserRole as PrismaUserRole } from '@prisma/client';
 
 @Injectable()
 export class UsersService {
@@ -71,7 +71,7 @@ export class UsersService {
     organizationId: string,
     invitedBy: string,
     email: string,
-    role: string = 'user',
+    role: string = PrismaUserRole.USER,
   ) {
     this.logger.log(`💌 Creating invitation for ${email} to org ${organizationId}`);
     this.logger.debug(`🔍 Parameters: organizationId=${organizationId}, invitedBy=${invitedBy}, email=${email}, role=${role}`);
@@ -290,7 +290,16 @@ export class UsersService {
   /**
    * Update user role (ADMIN only)
    */
-  async updateUserRole(userId: string, newRole: UserRole, requestingUserId: string, organizationId: string) {
+  async updateUserRole(userId: string, newRole: PrismaUserRole, requestingUserId: string, organizationId: string) {
+    const requester = await this.prisma.user.findFirst({
+      where: { id: requestingUserId, organizationId },
+      select: { role: true },
+    });
+
+    if (!requester) {
+      throw new NotFoundException('Requesting user not found');
+    }
+
     // Check if target user exists and belongs to organization
     const targetUser = await this.prisma.user.findFirst({
       where: { id: userId, organizationId },
@@ -305,10 +314,18 @@ export class UsersService {
       throw new BadRequestException('You cannot change your own role');
     }
 
+    // SUPER_ADMIN can only be assigned/modified by another SUPER_ADMIN
+    if (
+      (targetUser.role === PrismaUserRole.SUPER_ADMIN || newRole === PrismaUserRole.SUPER_ADMIN) &&
+      requester.role !== PrismaUserRole.SUPER_ADMIN
+    ) {
+      throw new ForbiddenException('Only SUPER_ADMIN can modify SUPER_ADMIN roles');
+    }
+
     // Check if organization has at least one admin
-    if (targetUser.role === UserRole.ADMIN) {
+    if (targetUser.role === PrismaUserRole.ADMIN) {
       const adminCount = await this.prisma.user.count({
-        where: { organizationId, role: UserRole.ADMIN },
+        where: { organizationId, role: PrismaUserRole.ADMIN },
       });
 
       if (adminCount <= 1) {
@@ -334,6 +351,15 @@ export class UsersService {
    * Delete user (ADMIN only)
    */
   async deleteUser(userId: string, requestingUserId: string, organizationId: string) {
+    const requester = await this.prisma.user.findFirst({
+      where: { id: requestingUserId, organizationId },
+      select: { role: true },
+    });
+
+    if (!requester) {
+      throw new NotFoundException('Requesting user not found');
+    }
+
     const targetUser = await this.prisma.user.findFirst({
       where: { id: userId, organizationId },
     });
@@ -346,10 +372,17 @@ export class UsersService {
       throw new BadRequestException('You cannot delete your own account');
     }
 
+    if (
+      targetUser.role === PrismaUserRole.SUPER_ADMIN &&
+      requester.role !== PrismaUserRole.SUPER_ADMIN
+    ) {
+      throw new ForbiddenException('Only SUPER_ADMIN can delete SUPER_ADMIN users');
+    }
+
     // Check if organization has at least one admin
-    if (targetUser.role === UserRole.ADMIN) {
+    if (targetUser.role === PrismaUserRole.ADMIN) {
       const adminCount = await this.prisma.user.count({
-        where: { organizationId, role: UserRole.ADMIN },
+        where: { organizationId, role: PrismaUserRole.ADMIN },
       });
 
       if (adminCount <= 1) {

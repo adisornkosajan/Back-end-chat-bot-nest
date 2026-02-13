@@ -27,6 +27,12 @@ export class FeatureGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest();
     const orgId = request?.user?.organizationId;
+    const role = String(request?.user?.role || '').toUpperCase();
+
+    if (role === 'SUPER_ADMIN') {
+      return true;
+    }
+
     if (!orgId) {
       throw new ForbiddenException('Organization not found in request');
     }
@@ -44,4 +50,3 @@ export class FeatureGuard implements CanActivate {
     return true;
   }
 }
-

@@ -3,6 +3,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { UsersService } from './users.service';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles, UserRole } from '../../common/decorators/roles.decorator';
+import { UserRole as PrismaUserRole } from '@prisma/client';
 
 @Controller('users')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -65,7 +66,7 @@ export class UsersController {
   @Roles(UserRole.ADMIN)
   async updateUserRole(
     @Param('id') userId: string,
-    @Body('role') role: UserRole,
+    @Body('role') role: PrismaUserRole,
     @Req() req: any,
   ) {
     return this.usersService.updateUserRole(
@@ -104,7 +105,7 @@ export class UsersController {
       req.user.organizationId,
       req.user.id,
       body.email,
-      body.role || 'user',
+      body.role || PrismaUserRole.USER,
     );
 
     const inviteUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/accept-invite?token=${invitation.token}`;

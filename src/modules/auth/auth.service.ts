@@ -301,11 +301,15 @@ export class AuthService {
     };
   }
 
-  buildOAuthUrl(state: string) {
+  buildOAuthUrl(state: string, overrideRedirectUri?: string) {
     const appId = this.configService.get('oauth.meta.appId');
-    const redirectUri = this.configService.get('oauth.meta.redirectUri');
+    const redirectUri = overrideRedirectUri || this.configService.get('oauth.meta.redirectUri');
     const oauthUrl = this.configService.get('oauth.meta.oauthUrl');
     const scopes = this.configService.get('oauth.meta.scopes');
+
+    if (!redirectUri) {
+      throw new BadRequestException('META_REDIRECT_URI is not configured');
+    }
 
     const params = new URLSearchParams({
       client_id: appId,
@@ -319,7 +323,7 @@ export class AuthService {
     return `${oauthUrl}?${params.toString()}`;
   }
 
-  async handleOAuthCallback(code: string, state: string) {
+  async handleOAuthCallback(code: string, state: string, overrideRedirectUri?: string) {
     try {
       this.logger.debug(`🔄 Handling OAuth callback with code and state: ${state}`);
 
@@ -327,7 +331,11 @@ export class AuthService {
       const tokenUrl = this.configService.get('oauth.meta.tokenUrl');
       const appId = this.configService.get('oauth.meta.appId');
       const appSecret = this.configService.get('oauth.meta.appSecret');
-      const redirectUri = this.configService.get('oauth.meta.redirectUri');
+      const redirectUri = overrideRedirectUri || this.configService.get('oauth.meta.redirectUri');
+
+      if (!redirectUri) {
+        throw new BadRequestException('META_REDIRECT_URI is not configured');
+      }
 
       const tokenResponse = await axios.get(tokenUrl, {
         params: {

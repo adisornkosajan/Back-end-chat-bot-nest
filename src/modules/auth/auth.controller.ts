@@ -97,7 +97,8 @@ export class AuthController {
     }
 
     const state = `${organizationId}:${Date.now()}`;
-    const url = this.authService.buildOAuthUrl(state);
+    const redirectUri = this.getOAuthRedirectUriFromRequest(req);
+    const url = this.authService.buildOAuthUrl(state, redirectUri);
 
     this.logger.log(`OAuth URL generated for user: ${userId}, org: ${organizationId}`);
     return { url, state, organizationId };
@@ -107,21 +108,23 @@ export class AuthController {
   async oauthCallback(
     @Query('code') code: string,
     @Query('state') state: string,
+    @Req() req: any,
     @Res() res: Response,
   ) {
     this.logger.log(`OAuth callback received with state: ${state}`);
     try {
-      await this.authService.handleOAuthCallback(code, state);
+      const redirectUri = this.getOAuthRedirectUriFromRequest(req);
+      await this.authService.handleOAuthCallback(code, state, redirectUri);
       this.logger.log('OAuth callback processed successfully');
 
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-      res.redirect(`${frontendUrl}/dashboard/connections?oauth=success`);
+      const frontendPath = this.getFrontendConnectionsPath();
+      res.redirect(`${frontendPath}?oauth=success`);
     } catch (error) {
       this.logger.error('OAuth callback failed:', error.message);
 
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const frontendPath = this.getFrontendConnectionsPath();
       res.redirect(
-        `${frontendUrl}/dashboard/connections?oauth=error&message=${encodeURIComponent(error.message)}`,
+        `${frontendPath}?oauth=error&message=${encodeURIComponent(error.message)}`,
       );
     }
   }
@@ -160,5 +163,26 @@ export class AuthController {
       this.logger.error('Failed to accept invitation:', error.message);
       throw error;
     }
+  }
+
+  private getOAuthRedirectUriFromRequest(req: any): string {
+    const forwardedProto = req?.headers?.['x-forwarded-proto'];
+    const forwardedHost = req?.headers?.['x-forwarded-host'];
+    const host = Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost || req?.headers?.host;
+    const proto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto || req?.protocol || 'https';
+
+    return `${proto}://${host}/api/auth/oauth/callback`;
+  }
+
+  private getFrontendConnectionsPath(): string {
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
+    const defaultLocale = process.env.DEFAULT_LOCALE || 'en';
+    const hasLocalePrefix = /\/[a-z]{2}$/i.test(frontendUrl);
+
+    if (hasLocalePrefix) {
+      return `${frontendUrl}/dashboard/connections`;
+    }
+
+    return `${frontendUrl}/${defaultLocale}/dashboard/connections`;
   }
 }

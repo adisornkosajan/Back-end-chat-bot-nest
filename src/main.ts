@@ -45,6 +45,13 @@ async function bootstrap() {
 
   const port = config.get<number>('PORT') || 3001;
   const corsOrigin = config.get<string>('CORS_ORIGIN') || '*';
+  const allowedOrigins =
+    corsOrigin === '*'
+      ? '*'
+      : corsOrigin
+          .split(',')
+          .map((origin) => origin.trim().replace(/\/+$/, ''))
+          .filter(Boolean);
 
   logger.log('🚀 Starting Talk-V AI Backend...');
   
@@ -58,7 +65,22 @@ async function bootstrap() {
   );
 
   app.enableCors({
-    origin: corsOrigin,
+    origin: (origin, callback) => {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins === '*') {
+        return callback(null, true);
+      }
+
+      const normalizedOrigin = origin.replace(/\/+$/, '');
+      if (allowedOrigins.includes(normalizedOrigin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`CORS blocked for origin: ${origin}`), false);
+    },
     credentials: true,
   });
 

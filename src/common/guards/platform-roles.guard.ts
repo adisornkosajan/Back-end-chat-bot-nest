@@ -30,6 +30,10 @@ export class PlatformRolesGuard implements CanActivate {
       throw new ForbiddenException('User not authenticated');
     }
 
+    if (String(user.role || '').toUpperCase() === 'SUPER_ADMIN') {
+      return true;
+    }
+
     if (!user.platformRole || user.platformRole === 'NONE') {
       throw new ForbiddenException('Platform role is required');
     }
@@ -44,4 +48,3 @@ export class PlatformRolesGuard implements CanActivate {
     return true;
   }
 }
-

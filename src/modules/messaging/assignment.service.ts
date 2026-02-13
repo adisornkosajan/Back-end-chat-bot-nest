@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ConversationStatus } from '@prisma/client';
+import { ConversationStatus, UserRole } from '@prisma/client';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 @Injectable()
@@ -193,7 +193,7 @@ export class AssignmentService {
     const agents = await this.prisma.user.findMany({
       where: {
         organizationId,
-        role: { in: ['USER', 'MANAGER', 'ADMIN'] },
+        role: { in: [UserRole.USER, UserRole.MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN] },
       },
       select: {
         id: true,

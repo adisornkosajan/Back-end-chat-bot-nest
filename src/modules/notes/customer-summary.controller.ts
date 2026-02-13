@@ -51,6 +51,23 @@ export class CustomerSummaryController {
     );
   }
 
+  @Post('conversation/:conversationId/generate')
+  async generateSummary(
+    @Req() req: any,
+    @Param('conversationId') conversationId: string,
+  ) {
+    const userId = req.user.id || req.user.sub || req.user.userId;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+
+    return this.customerSummaryService.generateFromConversation(
+      req.user.organizationId,
+      conversationId,
+      userId,
+    );
+  }
+
   @Delete('conversation/:conversationId')
   async deleteSummary(@Req() req: any, @Param('conversationId') conversationId: string) {
     return this.customerSummaryService.delete(

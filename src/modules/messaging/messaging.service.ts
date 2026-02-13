@@ -128,6 +128,23 @@ export class MessagingService {
 
     this.logger.log(`📝 Creating message in conversation: ${conversation.id}`);
     
+    // Prevent duplicate inserts when provider/webhook retries the same message ID.
+    if (data.messageId) {
+      const existingMessage = await this.prisma.message.findFirst({
+        where: {
+          organizationId: platform.organizationId,
+          conversationId: conversation.id,
+          platformMessageId: data.messageId,
+        },
+      });
+
+      if (existingMessage) {
+        this.logger.warn(
+          `Duplicate inbound message skipped: ${data.messageId} (conversation: ${conversation.id})`,
+        );
+        return;
+      }
+    }
     // Download and convert image to base64 if imageUrl or imageId provided
     let imageBase64: string | null = null;
     
@@ -267,9 +284,7 @@ export class MessagingService {
         organizationId,
         conversationId,
       },
-      orderBy: {
-        createdAt: 'asc',
-      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
   }
 
@@ -487,6 +502,11 @@ export class MessagingService {
     });
 
     // 3️⃣ Realtime broadcast
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: { lastMessageAt: new Date() },
+    });
+
     this.realtime.emitNewMessage(organizationId, conversationId, message);
 
     return message;
@@ -1217,4 +1237,6 @@ export class MessagingService {
     }
   }
 }
+
+
 
