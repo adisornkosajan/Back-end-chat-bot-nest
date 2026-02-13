@@ -73,35 +73,64 @@ export class UsersService {
   async createInvitation(
     organizationId: string,
     invitedBy: string,
+    invitedByRole: PrismaUserRole,
     email: string,
-    role: string = PrismaUserRole.USER,
+    role: PrismaUserRole = PrismaUserRole.USER,
   ) {
-    this.logger.log(`💌 Creating invitation for ${email} to org ${organizationId}`);
-    this.logger.debug(`🔍 Parameters: organizationId=${organizationId}, invitedBy=${invitedBy}, email=${email}, role=${role}`);
+    const normalizedEmail = (email || '').trim().toLowerCase();
+    this.logger.log(`Creating invitation for ${normalizedEmail} to org ${organizationId}`);
+    this.logger.debug(`Parameters: organizationId=${organizationId}, invitedBy=${invitedBy}, invitedByRole=${invitedByRole}, email=${normalizedEmail}, role=${role}`);
+
+    if (!normalizedEmail) {
+      throw new BadRequestException('Email is required');
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(normalizedEmail)) {
+      throw new BadRequestException('Invalid email format');
+    }
+
+    if (role === PrismaUserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Cannot invite SUPER_ADMIN');
+    }
+
+    // Role policy:
+    // - SUPER_ADMIN: can invite ADMIN / MANAGER / USER
+    // - ADMIN: can invite MANAGER / USER
+    // - MANAGER: can invite USER only
+    if (invitedByRole === PrismaUserRole.ADMIN && role === PrismaUserRole.ADMIN) {
+      throw new ForbiddenException('Only SUPER_ADMIN can invite ADMIN');
+    }
+    if (
+      invitedByRole === PrismaUserRole.MANAGER &&
+      role !== PrismaUserRole.USER
+    ) {
+      throw new ForbiddenException('MANAGER can invite USER only');
+    }
 
     // Check if user already exists
     const existingUser = await this.prisma.user.findFirst({
       where: {
-        email,
+        email: normalizedEmail,
         organizationId,
       },
     });
 
     if (existingUser) {
-      throw new Error('User with this email already exists in the organization');
+      throw new BadRequestException('User with this email already exists in the organization');
     }
 
     // Check if there's a pending invitation
     const existingInvite = await this.prisma.invitation.findFirst({
       where: {
-        email,
+        email: normalizedEmail,
         organizationId,
         status: 'pending',
       },
     });
 
     if (existingInvite) {
-      throw new Error('An invitation has already been sent to this email');
+      throw new BadRequestException('An invitation has already been sent to this email');
     }
 
     // Generate random token
@@ -111,7 +140,7 @@ export class UsersService {
     const invitation = await this.prisma.invitation.create({
       data: {
         organizationId,
-        email,
+        email: normalizedEmail,
         token,
         role,
         invitedBy,
@@ -127,11 +156,10 @@ export class UsersService {
       },
     });
 
-    this.logger.log(`✅ Invitation created: ${invitation.id}`);
+    this.logger.log(`Invitation created: ${invitation.id}`);
 
     return invitation;
   }
-
   /**
    * Get all pending invitations for organization
    */
@@ -317,12 +345,26 @@ export class UsersService {
       throw new BadRequestException('You cannot change your own role');
     }
 
+    if (newRole === PrismaUserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Cannot assign SUPER_ADMIN via this endpoint');
+    }
+
     // SUPER_ADMIN can only be assigned/modified by another SUPER_ADMIN
     if (
-      (targetUser.role === PrismaUserRole.SUPER_ADMIN || newRole === PrismaUserRole.SUPER_ADMIN) &&
+      targetUser.role === PrismaUserRole.SUPER_ADMIN &&
       requester.role !== PrismaUserRole.SUPER_ADMIN
     ) {
       throw new ForbiddenException('Only SUPER_ADMIN can modify SUPER_ADMIN roles');
+    }
+
+    // Only SUPER_ADMIN can assign ADMIN
+    if (newRole === PrismaUserRole.ADMIN && requester.role !== PrismaUserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Only SUPER_ADMIN can assign ADMIN role');
+    }
+
+    // ADMIN cannot modify another ADMIN
+    if (requester.role === PrismaUserRole.ADMIN && targetUser.role === PrismaUserRole.ADMIN) {
+      throw new ForbiddenException('ADMIN cannot modify another ADMIN');
     }
 
     // Check if organization has at least one admin

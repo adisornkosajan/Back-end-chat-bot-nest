@@ -23,10 +23,10 @@ export class OrganizationsController {
    * Update current user's organization
    */
   @Put('current')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.SUPER_ADMIN)
   async updateCurrentOrganization(
     @Req() req: any,
-    @Body() body: { name?: string; description?: string },
+    @Body() body: { name?: string; address?: string; contact?: string; trn?: string; description?: string },
   ) {
     return this.organizationsService.updateOrganization(req.user.organizationId, body);
   }

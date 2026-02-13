@@ -29,13 +29,21 @@ export class FacebookAdapter {
     let contentType = 'text';
     let imageUrl: string | undefined = undefined;
 
-    // Check for image attachment
+    // Check attachment (image/video/other)
     if (messaging.message?.attachments?.[0]) {
       const attachment = messaging.message.attachments[0];
+      if (attachment.payload?.url) {
+        imageUrl = attachment.payload.url;
+      }
       if (attachment.type === 'image') {
-        imageUrl = attachment.payload?.url;
         messageText = messageText || '[Image]';
         contentType = 'image';
+      } else if (attachment.type === 'video') {
+        messageText = messageText || '[Video]';
+        contentType = 'video';
+      } else {
+        messageText = messageText || `[${attachment.type}]`;
+        contentType = attachment.type || 'file';
       }
     }
 

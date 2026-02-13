@@ -17,6 +17,16 @@ export class MessagingService {
     private readonly pluginEngine: PluginEngineService,
   ) {}
 
+  private extractPlatformMessageId(responseData: any): string | undefined {
+    if (!responseData) return undefined;
+    if (typeof responseData.message_id === 'string') return responseData.message_id;
+    if (Array.isArray(responseData.messages) && typeof responseData.messages[0]?.id === 'string') {
+      return responseData.messages[0].id;
+    }
+    if (typeof responseData.id === 'string') return responseData.id;
+    return undefined;
+  }
+
   async processInbound(data: {
     platform: string;
     recipientId: string; // Page ID / IG Account ID / Phone Number ID
@@ -340,15 +350,17 @@ export class MessagingService {
     const platformType = conversation.platform.type;
 
     let imageUrl: string | null = null;
+    let platformMessageId: string | undefined;
+    const isVideoFile = Boolean(file?.mimetype?.startsWith('video/'));
 
     // 1️⃣ ส่งไปยัง Platform
     try {
       if (file) {
-        // Convert image to base64 for storage
+        // Convert media to base64 for storage
         const base64Image = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
         imageUrl = base64Image;
 
-        // Upload image to platform
+        // Upload media to platform
         if (platformType === 'facebook' || platformType === 'instagram') {
           // For Facebook/Instagram, we need to send as attachment
           const FormData = require('form-data');
@@ -357,7 +369,7 @@ export class MessagingService {
           formData.append('recipient', JSON.stringify({ id: recipientId }));
           formData.append('message', JSON.stringify({
             attachment: {
-              type: 'image',
+              type: isVideoFile ? 'video' : 'image',
               payload: {
                 is_reusable: true
               }
@@ -368,7 +380,7 @@ export class MessagingService {
             contentType: file.mimetype,
           });
 
-          await axios.post(
+          const mediaResponse = await axios.post(
             'https://graph.facebook.com/v19.0/me/messages',
             formData,
             {
@@ -376,10 +388,11 @@ export class MessagingService {
               headers: formData.getHeaders(),
             },
           );
+          platformMessageId = this.extractPlatformMessageId(mediaResponse.data) || platformMessageId;
 
           // Send text if provided
           if (text) {
-            await axios.post(
+            const textResponse = await axios.post(
               'https://graph.facebook.com/v19.0/me/messages',
               {
                 messaging_type: 'RESPONSE',
@@ -390,6 +403,7 @@ export class MessagingService {
                 params: { access_token: pageToken },
               },
             );
+            platformMessageId = this.extractPlatformMessageId(textResponse.data) || platformMessageId;
           }
         } else if (platformType === 'whatsapp') {
           const phoneNumberId = conversation.platform.pageId;
@@ -415,27 +429,47 @@ export class MessagingService {
 
           const mediaId = uploadResponse.data.id;
 
-          // Send image message
-          await axios.post(
-            `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
-            {
-              messaging_product: 'whatsapp',
-              to: recipientId,
-              type: 'image',
-              image: { id: mediaId, caption: content || '' },
-            },
-            {
-              headers: {
-                'Authorization': `Bearer ${pageToken}`,
-                'Content-Type': 'application/json',
+          // Send media message
+          if (isVideoFile) {
+            const sendResponse = await axios.post(
+              `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
+              {
+                messaging_product: 'whatsapp',
+                to: recipientId,
+                type: 'video',
+                video: { id: mediaId, caption: text || '' },
               },
-            },
-          );
+              {
+                headers: {
+                  'Authorization': `Bearer ${pageToken}`,
+                  'Content-Type': 'application/json',
+                },
+              },
+            );
+            platformMessageId = this.extractPlatformMessageId(sendResponse.data) || platformMessageId;
+          } else {
+            const sendResponse = await axios.post(
+              `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
+              {
+                messaging_product: 'whatsapp',
+                to: recipientId,
+                type: 'image',
+                image: { id: mediaId, caption: text || '' },
+              },
+              {
+                headers: {
+                  'Authorization': `Bearer ${pageToken}`,
+                  'Content-Type': 'application/json',
+                },
+              },
+            );
+            platformMessageId = this.extractPlatformMessageId(sendResponse.data) || platformMessageId;
+          }
         }
       } else {
         // Text only message
         if (platformType === 'facebook') {
-          await axios.post(
+          const sendResponse = await axios.post(
             'https://graph.facebook.com/v19.0/me/messages',
             {
               messaging_type: 'RESPONSE',
@@ -443,11 +477,12 @@ export class MessagingService {
                 message: { text },
             },
             {
-              params: { access_token: pageToken },
+                params: { access_token: pageToken },
             },
           );
+          platformMessageId = this.extractPlatformMessageId(sendResponse.data) || platformMessageId;
         } else if (platformType === 'instagram') {
-          await axios.post(
+          const sendResponse = await axios.post(
             'https://graph.facebook.com/v19.0/me/messages',
             {
               messaging_type: 'RESPONSE',
@@ -455,12 +490,13 @@ export class MessagingService {
                 message: { text },
             },
             {
-              params: { access_token: pageToken },
+                params: { access_token: pageToken },
             },
           );
+          platformMessageId = this.extractPlatformMessageId(sendResponse.data) || platformMessageId;
         } else if (platformType === 'whatsapp') {
           const phoneNumberId = conversation.platform.pageId;
-          await axios.post(
+          const sendResponse = await axios.post(
             `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
             {
               messaging_product: 'whatsapp',
@@ -475,6 +511,7 @@ export class MessagingService {
               },
             },
           );
+          platformMessageId = this.extractPlatformMessageId(sendResponse.data) || platformMessageId;
         } else {
           throw new Error(`Platform ${platformType} not supported yet`);
         }
@@ -491,10 +528,14 @@ export class MessagingService {
       conversationId,
       senderType: 'agent',
       content: text,
+      contentType: file ? (isVideoFile ? 'video' : 'image') : 'text',
     };
 
     if (imageUrl) {
       messageData.imageUrl = imageUrl;
+    }
+    if (platformMessageId) {
+      messageData.platformMessageId = platformMessageId;
     }
 
     const message = await this.prisma.message.create({
@@ -897,14 +938,18 @@ export class MessagingService {
         if (response.shouldRespond && response.message) {
           hasResponse = true;
           this.logger.log(`📤 Sending plugin response: ${response.message.substring(0, 50)}...`);
+          let platformMessageId: string | undefined;
 
           // ส่งข้อความตามแต่ละ platform
           if (platform.type === 'facebook') {
-            await this.sendFacebookMessage(platform, customer.externalId, response.message, response.imageUrl);
+            platformMessageId = await this.sendFacebookMessage(platform, customer.externalId, response.message, response.imageUrl);
+            
           } else if (platform.type === 'instagram') {
-            await this.sendInstagramMessage(platform, customer.externalId, response.message, response.imageUrl);
+            platformMessageId = await this.sendInstagramMessage(platform, customer.externalId, response.message, response.imageUrl);
+            
           } else if (platform.type === 'whatsapp') {
-            await this.sendWhatsAppMessage(platform, customer.externalId, response.message, response.imageUrl);
+            platformMessageId = await this.sendWhatsAppMessage(platform, customer.externalId, response.message, response.imageUrl);
+            
           }
 
           // บันทึกข้อความตอบกลับ
@@ -915,6 +960,7 @@ export class MessagingService {
               senderType: 'agent',
               content: response.message,
               contentType: response.imageUrl ? 'image' : 'text',
+              platformMessageId,
             },
           });
 
@@ -973,12 +1019,13 @@ export class MessagingService {
           'Please wait a moment. We are connecting you to our staff. 🙏';
 
         // ส่งข้อความตอบกลับ
+        let platformMessageId: string | undefined;
         if (platform.type === 'facebook') {
-          await this.sendFacebookMessage(platform, customer.externalId, humanRequestResponse);
+          platformMessageId = await this.sendFacebookMessage(platform, customer.externalId, humanRequestResponse);
         } else if (platform.type === 'instagram') {
-          await this.sendInstagramMessage(platform, customer.externalId, humanRequestResponse);
+          platformMessageId = await this.sendInstagramMessage(platform, customer.externalId, humanRequestResponse);
         } else if (platform.type === 'whatsapp') {
-          await this.sendWhatsAppMessage(platform, customer.externalId, humanRequestResponse);
+          platformMessageId = await this.sendWhatsAppMessage(platform, customer.externalId, humanRequestResponse);
         }
 
         // บันทึกข้อความตอบกลับ
@@ -989,6 +1036,7 @@ export class MessagingService {
             senderType: 'agent',
             content: humanRequestResponse,
             contentType: 'text',
+            platformMessageId,
           },
         });
 
@@ -1025,12 +1073,13 @@ export class MessagingService {
       );
 
       // ส่งคำตอบกลับไปยัง platform (Facebook/Instagram/WhatsApp)
+      let platformMessageId: string | undefined;
       if (platform.type === 'facebook') {
-        await this.sendFacebookMessage(platform, customer.externalId, aiResponse);
+        platformMessageId = await this.sendFacebookMessage(platform, customer.externalId, aiResponse);
       } else if (platform.type === 'instagram') {
-        await this.sendInstagramMessage(platform, customer.externalId, aiResponse);
+        platformMessageId = await this.sendInstagramMessage(platform, customer.externalId, aiResponse);
       } else if (platform.type === 'whatsapp') {
-        await this.sendWhatsAppMessage(platform, customer.externalId, aiResponse);
+        platformMessageId = await this.sendWhatsAppMessage(platform, customer.externalId, aiResponse);
       }
 
       // บันทึกข้อความ AI ลงในฐานข้อมูล
@@ -1041,6 +1090,7 @@ export class MessagingService {
           senderType: 'agent',
           content: aiResponse,
           contentType: 'text',
+          platformMessageId,
         },
       });
 
@@ -1072,16 +1122,18 @@ export class MessagingService {
     recipientId: string,
     message: string,
     imageUrl?: string,
-  ) {
+  ): Promise<string | undefined> {
     const pageToken = platform.accessToken;
     if (!pageToken) {
       throw new Error('Facebook access token not found');
     }
 
+    let platformMessageId: string | undefined;
+
     // ถ้ามีรูปภาพ ส่ง text ก่อน แล้วส่งรูป
     if (imageUrl) {
       // ส่ง text message
-      await axios.post(
+      const textResponse = await axios.post(
         'https://graph.facebook.com/v19.0/me/messages',
         {
           messaging_type: 'RESPONSE',
@@ -1092,6 +1144,7 @@ export class MessagingService {
           params: { access_token: pageToken },
         },
       );
+      platformMessageId = this.extractPlatformMessageId(textResponse.data) || platformMessageId;
 
       // ส่ง image (ถ้าเป็น data URL ต้องแปลงเป็น hosted URL)
       // Facebook ต้องการ URL จริง ไม่รับ data:image/png;base64
@@ -1115,7 +1168,7 @@ export class MessagingService {
         contentType: 'image/png',
       });
 
-      await axios.post(
+      const mediaResponse = await axios.post(
         'https://graph.facebook.com/v19.0/me/messages',
         form,
         {
@@ -1123,9 +1176,10 @@ export class MessagingService {
           headers: form.getHeaders(),
         },
       );
+      platformMessageId = this.extractPlatformMessageId(mediaResponse.data) || platformMessageId;
     } else {
       // ส่ง text อย่างเดียว
-      await axios.post(
+      const textResponse = await axios.post(
         'https://graph.facebook.com/v19.0/me/messages',
         {
           messaging_type: 'RESPONSE',
@@ -1136,7 +1190,9 @@ export class MessagingService {
           params: { access_token: pageToken },
         },
       );
+      platformMessageId = this.extractPlatformMessageId(textResponse.data) || platformMessageId;
     }
+    return platformMessageId;
   }
 
   /**
@@ -1147,15 +1203,17 @@ export class MessagingService {
     recipientId: string,
     message: string,
     imageUrl?: string,
-  ) {
+  ): Promise<string | undefined> {
     const pageToken = platform.accessToken;
     if (!pageToken) {
       throw new Error('Instagram access token not found');
     }
 
+    let platformMessageId: string | undefined;
+
     // Instagram ใช้ API เดียวกับ Facebook
     if (imageUrl) {
-      await axios.post(
+      const textResponse = await axios.post(
         'https://graph.facebook.com/v19.0/me/messages',
         {
           messaging_type: 'RESPONSE',
@@ -1166,6 +1224,7 @@ export class MessagingService {
           params: { access_token: pageToken },
         },
       );
+      platformMessageId = this.extractPlatformMessageId(textResponse.data) || platformMessageId;
 
       const base64Data = imageUrl.replace(/^data:image\/\w+;base64,/, '');
       const buffer = Buffer.from(base64Data, 'base64');
@@ -1185,7 +1244,7 @@ export class MessagingService {
         contentType: 'image/png',
       });
 
-      await axios.post(
+      const mediaResponse = await axios.post(
         'https://graph.facebook.com/v19.0/me/messages',
         form,
         {
@@ -1193,8 +1252,9 @@ export class MessagingService {
           headers: form.getHeaders(),
         },
       );
+      platformMessageId = this.extractPlatformMessageId(mediaResponse.data) || platformMessageId;
     } else {
-      await axios.post(
+      const textResponse = await axios.post(
         'https://graph.facebook.com/v19.0/me/messages',
         {
           messaging_type: 'RESPONSE',
@@ -1205,7 +1265,9 @@ export class MessagingService {
           params: { access_token: pageToken },
         },
       );
+      platformMessageId = this.extractPlatformMessageId(textResponse.data) || platformMessageId;
     }
+    return platformMessageId;
   }
 
   /**
@@ -1216,7 +1278,7 @@ export class MessagingService {
     recipientPhone: string,
     message: string,
     imageUrl?: string,
-  ) {
+  ): Promise<string | undefined> {
     const phoneNumberId = platform.pageId;
     const accessToken = platform.accessToken;
 
@@ -1228,7 +1290,7 @@ export class MessagingService {
     this.logger.debug(`📤 Sending WhatsApp message to ${recipientPhone} via Phone Number ID: ${phoneNumberId}`);
 
     // ส่ง text message
-    await axios.post(
+    const textResponse = await axios.post(
       `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
       {
         messaging_product: 'whatsapp',
@@ -1243,6 +1305,7 @@ export class MessagingService {
         },
       },
     );
+    let platformMessageId = this.extractPlatformMessageId(textResponse.data);
 
     // ถ้ามีรูปภาพ ส่งต่อ
     if (imageUrl) {
@@ -1251,6 +1314,7 @@ export class MessagingService {
       // สำหรับ demo จะส่งแค่ text ก่อน (ต้อง implement image upload)
       this.logger.log('🔸 WhatsApp image sending requires media upload - currently sending text only');
     }
+    return platformMessageId;
   }
 }
 

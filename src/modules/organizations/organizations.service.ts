@@ -150,7 +150,10 @@ export class OrganizationsService {
    * Update organization details
    * สำหรับ admin แก้ไขข้อมูลองค์กรของตัวเอง
    */
-  async updateOrganization(organizationId: string, data: { name?: string }) {
+  async updateOrganization(
+    organizationId: string,
+    data: { name?: string; address?: string; contact?: string; trn?: string; description?: string },
+  ) {
     this.logger.log(`🔄 Updating organization ${organizationId}`);
 
     // Check if name already exists (if changing name)

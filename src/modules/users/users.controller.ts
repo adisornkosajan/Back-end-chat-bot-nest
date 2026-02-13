@@ -99,16 +99,23 @@ export class UsersController {
   @Roles(UserRole.ADMIN, UserRole.MANAGER)
   async inviteTeamMember(
     @Req() req: any,
-    @Body() body: { email: string; role?: string },
+    @Body() body: { email: string; role?: PrismaUserRole },
   ) {
     const invitation = await this.usersService.createInvitation(
       req.user.organizationId,
       req.user.id,
+      req.user.role,
       body.email,
-      body.role || PrismaUserRole.USER,
+      body.role ?? PrismaUserRole.USER,
     );
 
-    const inviteUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/accept-invite?token=${invitation.token}`;
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
+    const defaultLocale = process.env.DEFAULT_LOCALE || 'en';
+    const hasLocalePrefix = /\/[a-z]{2}$/i.test(frontendUrl);
+    const inviteBasePath = hasLocalePrefix
+      ? `${frontendUrl}/accept-invite`
+      : `${frontendUrl}/${defaultLocale}/accept-invite`;
+    const inviteUrl = `${inviteBasePath}?token=${invitation.token}`;
 
     return {
       ...invitation,

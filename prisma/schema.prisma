@@ -65,6 +65,10 @@ model User {
 model Organization {
   id               String            @id @default(uuid())
   name             String
+  address          String?           @db.Text
+  contact          String?
+  trn              String?
+  description      String?           @db.Text
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   users            User[]

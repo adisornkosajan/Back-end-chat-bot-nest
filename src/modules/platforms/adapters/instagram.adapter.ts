@@ -34,13 +34,18 @@ export class InstagramAdapter {
       let contentType = 'text';
       let imageUrl: string | undefined = undefined;
 
-      // Check for image attachment
+      // Check attachment (image/video/other)
       if (attachments.length > 0) {
         const attachment = attachments[0];
+        if (attachment.payload?.url) {
+          imageUrl = attachment.payload.url;
+        }
         if (attachment.type === 'image') {
-          imageUrl = attachment.payload?.url;
           messageText = messageText || '[Image]';
           contentType = 'image';
+        } else if (attachment.type === 'video') {
+          messageText = messageText || '[Video]';
+          contentType = 'video';
         } else {
           contentType = attachment.type;
           messageText = messageText || `[${attachment.type}]`;

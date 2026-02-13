@@ -28,6 +28,9 @@ export class AuthController {
       password: string;
       name: string;
       organizationName: string;
+      address?: string;
+      contact?: string;
+      trn?: string;
     },
   ) {
     this.logger.log(`Registration attempt for email: ${body.email}`);

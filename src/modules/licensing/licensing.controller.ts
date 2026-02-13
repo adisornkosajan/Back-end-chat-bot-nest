@@ -88,6 +88,11 @@ export class LicensingController {
   @Get('features/:feature')
   @Roles(UserRole.ADMIN, UserRole.MANAGER)
   async feature(@Req() req: any, @Param('feature') feature: string) {
+    const role = String(req?.user?.role || '').toUpperCase();
+    if (role === UserRole.SUPER_ADMIN) {
+      return { feature: feature.toUpperCase(), hasAccess: true };
+    }
+
     const hasAccess = await this.licensingService.hasFeatureAccess(
       req.user.organizationId,
       feature.toUpperCase(),
@@ -95,4 +100,3 @@ export class LicensingController {
     return { feature: feature.toUpperCase(), hasAccess };
   }
 }
-

@@ -8,9 +8,9 @@ import {
   Body,
   Query,
   UseInterceptors,
-  UploadedFile,
+  UploadedFiles,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { MessagingService } from './messaging.service';
 import { AuthGuard } from '@nestjs/passport';
 
@@ -59,14 +59,24 @@ export class MessagingController {
   }
 
   @Post('send')
-  @UseInterceptors(FileInterceptor('image'))
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'image', maxCount: 1 },
+      { name: 'media', maxCount: 1 },
+    ]),
+  )
   async send(
     @Req() req: any,
     @Body() body: { conversationId: string; content: string; agentId: any },
-    @UploadedFile() file?: Express.Multer.File,
+    @UploadedFiles()
+    files?: {
+      image?: Express.Multer.File[];
+      media?: Express.Multer.File[];
+    },
   ) {
     const { conversationId, content } = body;
     const agentId = body.agentId || req.user?.id || req.user?.userId || req.user?.sub;
+    const file = files?.media?.[0] || files?.image?.[0];
     console.log('Sending message to conversation:', conversationId);
     console.log('File uploaded:', file ? file.originalname : 'No file');
     return this.messaging.sendAgentMessage(

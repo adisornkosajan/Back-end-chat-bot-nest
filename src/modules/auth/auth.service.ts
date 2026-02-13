@@ -22,6 +22,9 @@ export class AuthService {
     password: string;
     name: string;
     organizationName: string;
+    address?: string;
+    contact?: string;
+    trn?: string;
   }) {
     this.logger.debug(`Registering new user: ${data.email} with org: ${data.organizationName}`);
 
@@ -69,6 +72,9 @@ export class AuthService {
       const organization = await tx.organization.create({
         data: {
           name: data.organizationName,
+          address: data.address?.trim() || null,
+          contact: data.contact?.trim() || null,
+          trn: data.trn?.trim() || null,
         },
       });
 
@@ -270,7 +276,6 @@ export class AuthService {
     const invitation = await this.prisma.invitation.findFirst({
       where: {
         token,
-        status: 'pending',
       },
       include: {
         organization: {
@@ -282,7 +287,19 @@ export class AuthService {
     });
 
     if (!invitation) {
-      throw new BadRequestException('Invalid or expired invitation');
+      throw new BadRequestException('Invitation link is invalid');
+    }
+
+    if (invitation.status === 'accepted') {
+      throw new BadRequestException('This invitation has already been used');
+    }
+
+    if (invitation.status === 'revoked') {
+      throw new BadRequestException('This invitation has been canceled');
+    }
+
+    if (invitation.status === 'expired') {
+      throw new BadRequestException('This invitation has expired');
     }
 
     if (new Date() > invitation.expiresAt) {
@@ -290,7 +307,7 @@ export class AuthService {
         where: { id: invitation.id },
         data: { status: 'expired' },
       });
-      throw new BadRequestException('Invitation has expired');
+      throw new BadRequestException('This invitation has expired');
     }
 
     return {
