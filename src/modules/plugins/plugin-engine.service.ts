@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+﻿import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { QRCodeService } from './qrcode.service';
 
@@ -179,7 +179,7 @@ export class PluginEngineService {
     if (daySchedule?.closed) {
       return {
         shouldRespond: true,
-        message: config?.closedMessage || '🔒 ขณะนี้เราปิดทำการค่ะ\nเปิดทำการวันจันทร์-เสาร์ 09:00-18:00 น.\nฝากข้อความไว้ได้เลยค่ะ เราจะตอบกลับโดยเร็วที่สุด 😊',
+        message: config?.closedMessage || '🔒 We are currently closed.\nBusiness hours: Monday-Saturday 09:00-18:00.\nPlease leave a message and we will reply as soon as possible 😊',
         stopProcessing: false,
       };
     }
@@ -189,7 +189,7 @@ export class PluginEngineService {
       if (currentTime < daySchedule.open || currentTime > daySchedule.close) {
         return {
           shouldRespond: true,
-          message: config?.outsideHoursMessage || `⏰ ขณะนี้นอกเวลาทำการค่ะ\nเปิดทำการ ${daySchedule.open}-${daySchedule.close} น.\nฝากข้อความไว้ได้เลยค่ะ เราจะตอบกลับโดยเร็วที่สุด 😊`,
+          message: config?.outsideHoursMessage || `⏰ We are currently outside business hours.\nBusiness hours today: ${daySchedule.open}-${daySchedule.close}.\nPlease leave a message and we will reply as soon as possible 😊`,
           stopProcessing: false,
         };
       }
@@ -210,7 +210,7 @@ export class PluginEngineService {
       return null;
     }
 
-    const welcomeMessage = config?.message || `👋 สวัสดีค่ะ! ยินดีต้อนรับค่ะ\n\nเรายินดีให้บริการคุณ มีอะไรให้ช่วยไหมคะ? 😊`;
+    const welcomeMessage = config?.message || `👋 Welcome!\n\nWe are happy to help. How can we assist you today? 😊`;
 
     return {
       shouldRespond: true,
@@ -256,8 +256,8 @@ export class PluginEngineService {
     // Sentiment Analysis (ง่ายๆ)
     if (trackSentiment) {
       const message = context.message.content.toLowerCase();
-      const positiveWords = ['ดี', 'สวย', 'ชอบ', 'เยี่ยม', 'perfect', 'good', 'great', 'love'];
-      const negativeWords = ['แย่', 'ไม่ดี', 'เสีย', 'bad', 'poor', 'hate', 'terrible'];
+      const positiveWords = ['great', 'excellent', 'love', 'perfect', 'good'];
+      const negativeWords = ['bad', 'poor', 'hate', 'terrible', 'awful'];
 
       const sentiment = positiveWords.some(w => message.includes(w)) 
         ? 'positive' 
@@ -304,7 +304,7 @@ export class PluginEngineService {
         if (keywords.some((kw: string) => message.includes(kw.toLowerCase()))) {
           return {
             shouldRespond: true,
-            message: trigger.promotionMessage || '🎉 เรามีโปรโมชั่นพิเศษสำหรับคุณ!',
+            message: trigger.promotionMessage || '🎉 We have a special promotion for you!',
             stopProcessing: false,
           };
         }
@@ -322,7 +322,7 @@ export class PluginEngineService {
     context: PluginContext,
   ): Promise<PluginResponse | null> {
     const autoCreateTicket = config?.autoCreateTicket !== false;
-    const urgentKeywords = config?.urgentKeywords || ['urgent', 'ด่วน', 'emergency', 'ฉุกเฉิน'];
+    const urgentKeywords = config?.urgentKeywords || ['urgent', 'emergency'];
     
     const message = context.message.content.toLowerCase();
     const isUrgent = urgentKeywords.some((kw: string) => message.includes(kw.toLowerCase()));
@@ -335,7 +335,7 @@ export class PluginEngineService {
       
       return {
         shouldRespond: true,
-        message: '🚨 เราได้รับเรื่องด่วนของคุณแล้วค่ะ\nทีมงานจะติดต่อกลับโดยเร็วที่สุด ภายใน 15 นาที',
+        message: '🚨 We have received your urgent request.\nOur team will contact you as soon as possible, within 15 minutes.',
         stopProcessing: false,
       };
     }
@@ -403,7 +403,7 @@ export class PluginEngineService {
     context: PluginContext,
   ): Promise<PluginResponse | null> {
     const paymentGateway = config?.gateway || 'promptpay';
-    const paymentKeywords = config?.paymentKeywords || ['จ่ายเงิน', 'ชำระเงิน', 'payment', 'pay'];
+    const paymentKeywords = config?.paymentKeywords || ['payment', 'pay'];
     
     const message = context.message.content.toLowerCase();
     const wantsToPayment = paymentKeywords.some((kw: string) => message.includes(kw.toLowerCase()));
@@ -423,13 +423,13 @@ export class PluginEngineService {
           const qrData = await this.qrcodeService.generatePromptPayQR(phoneNumber, amount);
           
           // สร้างข้อความตอบกลับ
-          let responseMessage = `💳 ช่องทางการชำระเงิน\n\n📱 พร้อมเพย์: ${phoneNumber}`;
+          let responseMessage = `💳 Payment options\n\n📱 PromptPay: ${phoneNumber}`;
           
           if (amount) {
-            responseMessage += `\n💰 จำนวนเงิน: ${amount.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท`;
+            responseMessage += `\n💰 Amount: ${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} THB`;
           }
           
-          responseMessage += '\n\n📲 สแกน QR Code ด้านล่างเพื่อชำระเงิน';
+          responseMessage += '\n\n📲 Scan the QR Code below to make payment';
           
           return {
             shouldRespond: true,
@@ -441,14 +441,14 @@ export class PluginEngineService {
           this.logger.error('Failed to generate QR Code', error);
           return {
             shouldRespond: true,
-            message: `💳 ช่องทางการชำระเงิน\n\n📱 พร้อมเพย์: ${phoneNumber}\n💰 สแกน QR Code เพื่อชำระเงิน`,
+            message: `💳 Payment options\n\n📱 PromptPay: ${phoneNumber}\n💰 Scan the QR Code to make payment`,
             stopProcessing: false,
           };
         }
       } else if (paymentGateway === 'stripe' || paymentGateway === 'omise') {
         return {
           shouldRespond: true,
-          message: '💳 คลิกลิงก์เพื่อชำระเงินผ่านบัตรเครดิต\n🔗 [Payment Link]',
+          message: '💳 Click the link to pay by credit card\n🔗 [Payment Link]',
           stopProcessing: false,
         };
       }
@@ -464,21 +464,21 @@ export class PluginEngineService {
     return {
       rules: [
         {
-          keywords: ['ราคา', 'เท่าไหร่', 'ค่าบริการ'],
+          keywords: ['price', 'pricing', 'service fee'],
           matchAny: true,
-          response: '💰 ราคาบริการของเรามีดังนี้ค่ะ:\n\n• บริการ A - 500 บาท\n• บริการ B - 800 บาท\n• บริการ C - 1,200 บาท\n\nสนใจบริการไหนคะ?',
+          response: '💰 Our service prices are:\n\n• Service A - 500 THB\n• Service B - 800 THB\n• Service C - 1,200 THB\n\nWhich service are you interested in?',
           stopAfterMatch: false,
         },
         {
-          keywords: ['จองคิว', 'นัดหมาย', 'booking'],
+          keywords: ['booking', 'appointment', 'reserve'],
           matchAny: true,
-          response: '📅 สำหรับการจองคิว กรุณาแจ้ง:\n1. วันที่ต้องการ\n2. เวลาที่สะดวก\n3. บริการที่สนใจ\n\nเราจะจัดการให้นะคะ 😊',
+          response: '📅 To book an appointment, please provide:\n1. Preferred date\n2. Preferred time\n3. Service you are interested in\n\nWe will arrange it for you 😊',
           stopAfterMatch: true,
         },
         {
-          keywords: ['ที่อยู่', 'อยู่ไหน', 'location'],
+          keywords: ['address', 'location', 'where'],
           matchAny: true,
-          response: '📍 ที่อยู่: 123 ถนนสุขุมวิท กรุงเทพฯ 10110\n📞 โทร: 02-xxx-xxxx\n🕐 เปิดทำการ: จันทร์-เสาร์ 09:00-18:00 น.',
+          response: '📍 Address: 123 Sukhumvit Road, Bangkok 10110\n📞 Phone: 02-xxx-xxxx\n🕐 Business hours: Monday-Saturday 09:00-18:00',
           stopAfterMatch: false,
         },
       ],
@@ -500,8 +500,8 @@ export class PluginEngineService {
         saturday: { open: '09:00', close: '15:00' },
         sunday: { closed: true },
       },
-      closedMessage: '🔒 ขณะนี้เราปิดทำการค่ะ\nเปิดทำการวันจันทร์-เสาร์ 09:00-18:00 น.\nฝากข้อความไว้ได้เลยค่ะ เราจะตอบกลับโดยเร็วที่สุด 😊',
-      outsideHoursMessage: '⏰ ขณะนี้นอกเวลาทำการค่ะ\nฝากข้อความไว้ได้เลยค่ะ เราจะตอบกลับเมื่อเปิดทำการ 😊',
+      closedMessage: '🔒 We are currently closed.\nBusiness hours: Monday-Saturday 09:00-18:00.\nPlease leave a message and we will reply as soon as possible 😊',
+      outsideHoursMessage: '⏰ We are currently outside business hours.\nPlease leave a message and we will reply when we are open 😊',
     };
   }
 
@@ -510,7 +510,8 @@ export class PluginEngineService {
    */
   getWelcomeMessageDefaultConfig(): PluginConfig {
     return {
-      message: '👋 สวัสดีค่ะ! ยินดีต้อนรับค่ะ\n\nเรายินดีให้บริการคุณ มีอะไรให้ช่วยไหมคะ? 😊',
+      message: '👋 Welcome!\n\nWe are happy to help. How can we assist you today? 😊',
     };
   }
 }
+

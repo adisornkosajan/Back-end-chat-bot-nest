@@ -1,4 +1,4 @@
-import {
+﻿import {
   Controller,
   Get,
   Post,
@@ -104,28 +104,28 @@ export class PluginsController {
         return {
           type: 'auto-reply',
           name: 'Auto-Reply Plugin',
-          description: 'ตอบกลับอัตโนมัติตามคำสำคัญที่กำหนด',
+          description: 'Automatically reply based on configured keywords',
           config: this.pluginEngine.getAutoReplyDefaultConfig(),
         };
       case 'business-hours':
         return {
           type: 'business-hours',
           name: 'Business Hours Plugin',
-          description: 'ตรวจสอบเวลาทำการและแจ้งเตือนลูกค้า',
+          description: 'Check business hours and notify customers',
           config: this.pluginEngine.getBusinessHoursDefaultConfig(),
         };
       case 'welcome-message':
         return {
           type: 'welcome-message',
           name: 'Welcome Message Plugin',
-          description: 'ส่งข้อความต้อนรับลูกค้าใหม่',
+          description: 'Send a welcome message to new customers',
           config: this.pluginEngine.getWelcomeMessageDefaultConfig(),
         };
       case 'crm':
         return {
           type: 'crm',
           name: 'CRM Integration Plugin',
-          description: 'เชื่อมต่อกับระบบ CRM (Salesforce, HubSpot)',
+          description: 'Connect to CRM systems (Salesforce, HubSpot)',
           config: {
             crmType: 'salesforce', // or 'hubspot', 'generic'
             autoCreateContact: true,
@@ -138,11 +138,11 @@ export class PluginsController {
         return {
           type: 'analytics',
           name: 'Analytics Plugin',
-          description: 'วิเคราะห์ข้อมูลและ sentiment ของข้อความ',
+          description: 'Analyze message data and sentiment',
           config: {
             trackSentiment: true,
             trackKeywords: true,
-            keywords: ['ราคา', 'product', 'จอง', 'ส่งของ', 'ชำระเงิน'],
+            keywords: ['price', 'product', 'booking', 'delivery', 'payment'],
             generateReports: true,
             reportInterval: 'daily', // daily, weekly, monthly
           },
@@ -151,17 +151,17 @@ export class PluginsController {
         return {
           type: 'marketing',
           name: 'Marketing Automation Plugin',
-          description: 'ส่งโปรโมชั่นและข้อความการตลาดอัตโนมัติ',
+          description: 'Send automated promotions and marketing messages',
           config: {
             autoPromotion: true,
             promotionTriggers: [
               {
-                keywords: ['ราคา', 'price', 'เท่าไหร่'],
-                promotionMessage: '🎉 โปรโมชั่นพิเศษ! ลด 20% สำหรับลูกค้าใหม่\nใช้โค้ด: NEW20',
+                keywords: ['price', 'pricing', 'how much'],
+                promotionMessage: '🎉 Special promotion! 20% off for new customers.\nUse code: NEW20',
               },
               {
-                keywords: ['จอง', 'booking', 'สั่งซื้อ'],
-                promotionMessage: '💰 ฟรีค่าส่ง สำหรับยอดซื้อตั้งแต่ 500 บาทขึ้นไป!',
+                keywords: ['booking', 'reserve', 'order'],
+                promotionMessage: '💰 Free delivery for orders over 500 THB!',
               },
             ],
           },
@@ -170,10 +170,10 @@ export class PluginsController {
         return {
           type: 'support',
           name: 'Support Ticket Plugin',
-          description: 'ระบบซัพพอร์ตและจัดการ ticket อัตโนมัติ',
+          description: 'Support workflow with automatic ticket handling',
           config: {
             autoCreateTicket: true,
-            urgentKeywords: ['urgent', 'ด่วน', 'emergency', 'ฉุกเฉิน', 'help'],
+            urgentKeywords: ['urgent', 'emergency', 'help'],
             slaMinutes: 15, // Response time for urgent tickets
             assignTo: 'support-team',
             notifyEmail: 'support@example.com',
@@ -183,7 +183,7 @@ export class PluginsController {
         return {
           type: 'storage',
           name: 'File Storage Plugin',
-          description: 'จัดการและเก็บไฟล์ใน Cloud Storage',
+          description: 'Manage and store files in cloud storage',
           config: {
             storageType: 's3', // s3, google-drive, local
             autoBackup: true,
@@ -201,10 +201,10 @@ export class PluginsController {
         return {
           type: 'payment',
           name: 'Payment Gateway Plugin',
-          description: 'รับชำระเงินผ่าน Payment Gateway',
+          description: 'Accept payments via payment gateway',
           config: {
             gateway: 'promptpay', // promptpay, stripe, omise
-            paymentKeywords: ['จ่ายเงิน', 'ชำระเงิน', 'payment', 'pay'],
+            paymentKeywords: ['payment', 'pay'],
             promptpayConfig: {
               phoneNumber: '0812345678',
               generateQR: true,
@@ -237,3 +237,4 @@ export class PluginsController {
     return this.qrcodeService.generatePromptPayQR(phoneNumber, amountNum);
   }
 }
+

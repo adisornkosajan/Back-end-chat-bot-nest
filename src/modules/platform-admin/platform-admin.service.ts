@@ -1,7 +1,14 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { PlanTier, PlatformRole } from '@prisma/client';
+import { PlanTier, PlatformRole, UserRole } from '@prisma/client';
 import { randomUUID } from 'crypto';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LicensingService } from '../licensing/licensing.service';
 
@@ -105,6 +112,78 @@ export class PlatformAdminService {
         platformRole: true,
       },
     });
+  }
+
+  async bootstrapSuperAdmin(data: {
+    email: string;
+    password: string;
+    name: string;
+  }) {
+    const existingSuperAdminCount = await this.prisma.user.count({
+      where: {
+        role: UserRole.SUPER_ADMIN,
+      },
+    });
+
+    if (existingSuperAdminCount > 0) {
+      throw new ConflictException('SUPER_ADMIN already exists');
+    }
+
+    if (!data.email || !data.password || !data.name) {
+      throw new BadRequestException('email, password, and name are required');
+    }
+
+    if (data.password.length < 10) {
+      throw new BadRequestException('password must be at least 10 characters');
+    }
+
+    const existingEmail = await this.prisma.user.findUnique({
+      where: { email: data.email },
+    });
+    if (existingEmail) {
+      throw new ConflictException('Email already exists');
+    }
+
+    const platformOrgName =
+      process.env.PLATFORM_SUPERADMIN_ORG_NAME || 'Platform System';
+
+    const existingOrg = await this.prisma.organization.findFirst({
+      where: { name: platformOrgName },
+    });
+
+    const platformOrg =
+      existingOrg ||
+      (await this.prisma.organization.create({
+        data: { name: platformOrgName },
+      }));
+
+    const passwordHash = await bcrypt.hash(data.password, 10);
+
+    const user = await this.prisma.user.create({
+      data: {
+        email: data.email,
+        passwordHash,
+        name: data.name,
+        role: UserRole.SUPER_ADMIN,
+        platformRole: PlatformRole.OWNER,
+        organizationId: platformOrg.id,
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        platformRole: true,
+        organizationId: true,
+        createdAt: true,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'SUPER_ADMIN bootstrap completed',
+      user,
+    };
   }
 
   private async writeAuditLog(data: {

@@ -29,6 +29,9 @@ export class UsersService {
     const users = await this.prisma.user.findMany({
       where: {
         organizationId,
+        role: {
+          not: PrismaUserRole.SUPER_ADMIN,
+        },
       },
       select: {
         id: true,

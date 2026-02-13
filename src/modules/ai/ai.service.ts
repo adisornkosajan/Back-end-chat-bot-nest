@@ -46,7 +46,7 @@ export class AiService {
         },
       );
 
-      const aiResponse = response.data?.response || response.data?.message || 'ขออภัยค่ะ ไม่สามารถตอบกลับได้ในขณะนี้';
+      const aiResponse = response.data?.response || response.data?.message || 'Sorry, I cannot respond right now.';
       
       this.logger.log(`✅ AI Response received: ${aiResponse.substring(0, 50)}...`);
       
@@ -78,7 +78,7 @@ export class AiService {
       }
       
       // กรณีเกิดข้อผิดพลาด ส่งข้อความสำรองกลับไป
-      return 'ขออภัยค่ะ ระบบ AI มีปัญหาชั่วคราว กรุณารอสักครู่หรือติดต่อเจ้าหน้าที่ค่ะ';
+      return 'Sorry, the AI service is temporarily unavailable. Please try again shortly or contact support.';
     }
   }
 

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -24,5 +25,28 @@ export class PlatformBootstrapController {
 
     return this.platformAdminService.setOwnerByEmail(body.email);
   }
-}
 
+  @Post('super-admin')
+  async bootstrapSuperAdmin(
+    @Body()
+    body: { email: string; password: string; name: string; secret: string },
+  ) {
+    const expected = process.env.SUPER_ADMIN_BOOTSTRAP_SECRET;
+    if (!expected) {
+      throw new ForbiddenException('SUPER_ADMIN_BOOTSTRAP_SECRET is not configured');
+    }
+    if (body.secret !== expected) {
+      throw new ForbiddenException('Invalid bootstrap secret');
+    }
+
+    if (!body.email || !body.password || !body.name) {
+      throw new BadRequestException('email, password, and name are required');
+    }
+
+    return this.platformAdminService.bootstrapSuperAdmin({
+      email: body.email,
+      password: body.password,
+      name: body.name,
+    });
+  }
+}

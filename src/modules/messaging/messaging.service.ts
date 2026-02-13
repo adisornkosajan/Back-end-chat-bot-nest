@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -482,7 +482,7 @@ export class MessagingService {
     } catch (err: any) {
       this.logger.error(`❌ ${platformType.toUpperCase()} Send Error`);
       this.logger.error(JSON.stringify({ status: err?.response?.status, data: err?.response?.data, message: err?.message }));
-      throw err;
+      throw this.mapPlatformSendError(platformType, err);
     }
 
     // 2️⃣ บันทึก message
@@ -510,6 +510,28 @@ export class MessagingService {
     this.realtime.emitNewMessage(organizationId, conversationId, message);
 
     return message;
+  }
+
+  private isOutsideMetaMessagingWindow(error: any): boolean {
+    const code = error?.response?.data?.error?.code;
+    const subcode = error?.response?.data?.error?.error_subcode;
+    return code === 10 && subcode === 2018278;
+  }
+
+  private mapPlatformSendError(platformType: string, error: any): Error {
+    if (
+      (platformType === 'facebook' || platformType === 'instagram') &&
+      this.isOutsideMetaMessagingWindow(error)
+    ) {
+      return new BadRequestException({
+        message:
+          'Cannot send this message because the 24-hour messaging window has expired. Ask the customer to message again or use an approved Meta message tag/template.',
+        code: 'OUTSIDE_MESSAGING_WINDOW',
+        platform: platformType,
+      });
+    }
+
+    return error;
   }
 
   async syncFacebookMessages(organizationId: string, platformId: string) {
@@ -926,11 +948,6 @@ export class MessagingService {
     try {
       // 🔍 ตรวจสอบว่าลูกค้าขอคุยกับคนหรือไม่ (ต้องเช็คก่อนเพื่อ detect keywords ให้ได้)
       const requestHumanKeywords = [
-        // ภาษาไทย
-        'พูดกับคน', 'คุยกับคน', 'พูดกับพนักงาน', 'คุยกับพนักงาน',
-        'พูดกับแอดมิน', 'คุยกับแอดมิน', 'ติดต่อพนักงาน', 'ติดต่อเจ้าหน้าที่',
-        'ต้องการพูดกับคน', 'ขอพูดกับคน', 'ขอคุยกับคน',
-        // English
         'talk to human', 'speak to human', 'talk to agent', 'speak to agent',
         'talk to staff', 'speak to staff', 'customer service', 'human agent',
         'real person', 'actual person', 'talk to admin', 'speak to admin',
@@ -952,9 +969,8 @@ export class MessagingService {
         });
 
         // ตอบกลับว่ากำลังเชื่อมต่อกับเจ้าหน้าที่
-        const humanRequestResponse = messageLC.includes('พ') || messageLC.includes('คุย') 
-          ? 'ขอสักครู่นะคะ กำลังเชื่อมต่อกับเจ้าหน้าที่ให้คุณค่ะ 🙏'
-          : 'Please wait a moment. We\'re connecting you to our staff. 🙏';
+        const humanRequestResponse =
+          'Please wait a moment. We are connecting you to our staff. 🙏';
 
         // ส่งข้อความตอบกลับ
         if (platform.type === 'facebook') {
