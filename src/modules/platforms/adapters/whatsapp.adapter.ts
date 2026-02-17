@@ -9,8 +9,25 @@ export class WhatsAppAdapter {
     
     // WhatsApp Business Platform API webhook structure (2025-2026)
     // Format: { object: 'whatsapp_business_account', entry: [...] }
+    
+    // Check if this is a status update webhook (not a message)
+    if (payload?.entry?.[0]?.changes?.[0]?.value?.statuses) {
+      this.logger.debug('📊 WhatsApp status update webhook (message delivery status) - skipping');
+      return null;
+    }
+    
     if (!payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
+      // Log the actual payload structure for debugging
       this.logger.warn('⚠️ Invalid WhatsApp webhook payload structure');
+      this.logger.debug(`Payload structure: ${JSON.stringify({
+        hasEntry: !!payload?.entry,
+        entryLength: payload?.entry?.length,
+        hasChanges: !!payload?.entry?.[0]?.changes,
+        changesLength: payload?.entry?.[0]?.changes?.length,
+        hasValue: !!payload?.entry?.[0]?.changes?.[0]?.value,
+        valueKeys: payload?.entry?.[0]?.changes?.[0]?.value ? Object.keys(payload.entry[0].changes[0].value) : [],
+        hasMessages: !!payload?.entry?.[0]?.changes?.[0]?.value?.messages,
+      })}`);
       return null;
     }
 

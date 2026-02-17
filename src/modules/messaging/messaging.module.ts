@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { MessagingService } from './messaging.service';
 import { MessagingController } from './messaging.controller';
@@ -7,6 +7,8 @@ import { AssignmentController } from './assignment.controller';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { AiModule } from '../ai/ai.module';
 import { PluginsModule } from '../plugins/plugins.module';
+import { ChatbotFlowsModule } from '../chatbot-flows/chatbot-flows.module';
+import { AutoAssignRulesModule } from '../auto-assign-rules/auto-assign-rules.module';
 
 @Module({
   imports: [
@@ -14,9 +16,12 @@ import { PluginsModule } from '../plugins/plugins.module';
     RealtimeModule,
     AiModule,
     PluginsModule,
+    ChatbotFlowsModule,
+    AutoAssignRulesModule,
   ],
   providers: [MessagingService, AssignmentService],
   controllers: [MessagingController, AssignmentController],
   exports: [MessagingService, AssignmentService],
 })
 export class MessagingModule {}
+

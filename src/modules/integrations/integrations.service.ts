@@ -463,7 +463,7 @@ export class IntegrationsService {
         
         // ดึง WhatsApp Business Accounts ที่ user มีสิทธิ์เข้าถึง
         const response = await axios.get(
-          'https://graph.facebook.com/v19.0/me/businesses',
+          'https://graph.facebook.com/v21.0/me/businesses',
           {
             params: {
               access_token: accessToken,
@@ -492,7 +492,7 @@ export class IntegrationsService {
         const numbersPromises = wabaList.map(async (waba) => {
           try {
             const phoneResponse = await axios.get(
-              `https://graph.facebook.com/v19.0/${waba.wabaId}/phone_numbers`,
+              `https://graph.facebook.com/v21.0/${waba.wabaId}/phone_numbers`,
               {
                 params: {
                   access_token: accessToken,

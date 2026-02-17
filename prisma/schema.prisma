@@ -82,6 +82,10 @@ model Organization {
   quickReplies     QuickReply[]
   licenses         License[]
   invoices         Invoice[]
+  tags             Tag[]
+  broadcasts       Broadcast[]
+  chatbotFlows     ChatbotFlow[]
+  autoAssignRules  AutoAssignRule[]
 
   @@map("organizations")
 }
@@ -119,6 +123,7 @@ model Customer {
   updatedAt      DateTime       @updatedAt
   conversations  Conversation[]
   notes          Note[]
+  customerTags   CustomerTag[]
 
   @@unique([platformId, externalId])
   @@map("customers")
@@ -358,4 +363,118 @@ model Invoice {
   @@index([organizationId, status])
   @@index([providerRef])
   @@map("invoices")
+}
+
+// ===== CONTACT / CRM =====
+
+model Tag {
+  id             String        @id @default(uuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  color          String        @default("#3B82F6")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  customerTags   CustomerTag[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("tags")
+}
+
+model CustomerTag {
+  id         String   @id @default(uuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tagId      String
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([customerId, tagId])
+  @@index([customerId])
+  @@index([tagId])
+  @@map("customer_tags")
+}
+
+// ===== BROADCAST / MASS MESSAGING =====
+
+model Broadcast {
+  id              String               @id @default(uuid())
+  organizationId  String
+  organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name            String
+  message         String               @db.Text
+  imageUrl        String?              @db.Text
+  platformType    String?              // facebook, instagram, whatsapp — null = all
+  status          String               @default("draft") // draft, scheduled, sending, sent, failed
+  scheduledAt     DateTime?
+  sentAt          DateTime?
+  totalRecipients Int                  @default(0)
+  sentCount       Int                  @default(0)
+  failedCount     Int                  @default(0)
+  filterTags      Json?                // Tag IDs to filter recipients
+  createdBy       String
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  recipients      BroadcastRecipient[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@map("broadcasts")
+}
+
+model BroadcastRecipient {
+  id          String    @id @default(uuid())
+  broadcastId String
+  broadcast   Broadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+  customerId  String
+  platformId  String
+  status      String    @default("pending") // pending, sent, failed
+  sentAt      DateTime?
+  error       String?   @db.Text
+  createdAt   DateTime  @default(now())
+
+  @@index([broadcastId])
+  @@index([customerId])
+  @@map("broadcast_recipients")
+}
+
+// ===== CHATBOT FLOW BUILDER =====
+
+model ChatbotFlow {
+  id              String   @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name            String
+  description     String?  @db.Text
+  isActive        Boolean  @default(false)
+  triggerKeywords Json?    // Array of keywords that trigger this flow
+  nodes           Json     // Array of flow nodes [{id, type, data, next}]
+  createdBy       String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([isActive])
+  @@map("chatbot_flows")
+}
+
+// ===== AUTO-ASSIGN RULE ENGINE =====
+
+model AutoAssignRule {
+  id              String   @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name            String
+  type            String   // keyword, platform, time_based, round_robin
+  conditions      Json     // { keywords: [], platforms: [], timeRange: {start, end} }
+  assignToAgentId String?  // null = round-robin among all agents
+  priority        Int      @default(0) // higher = checked first
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([isActive, priority])
+  @@map("auto_assign_rules")
 }

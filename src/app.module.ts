@@ -23,6 +23,10 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { LicensingModule } from './modules/licensing/licensing.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { PlatformAdminModule } from './modules/platform-admin/platform-admin.module';
+import { ContactsModule } from './modules/contacts/contacts.module';
+import { BroadcastsModule } from './modules/broadcasts/broadcasts.module';
+import { ChatbotFlowsModule } from './modules/chatbot-flows/chatbot-flows.module';
+import { AutoAssignRulesModule } from './modules/auto-assign-rules/auto-assign-rules.module';
 
 @Module({
   imports: [
@@ -47,6 +51,10 @@ import { PlatformAdminModule } from './modules/platform-admin/platform-admin.mod
     LicensingModule,
     BillingModule,
     PlatformAdminModule,
+    ContactsModule,
+    BroadcastsModule,
+    ChatbotFlowsModule,
+    AutoAssignRulesModule,
   ],
 })
 export class AppModule {}

@@ -4,13 +4,13 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { join } from 'path';
 import 'winston-daily-rotate-file';
 
 async function bootstrap() {
-  // --- การตั้งค่า Winston Logger ---
   const winstonLogger = WinstonModule.createLogger({
     transports: [
-      // 1. แสดงผลบน Console (แบบมีสีสัน)
       new winston.transports.Console({
         format: winston.format.combine(
           winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -20,42 +20,39 @@ async function bootstrap() {
           }),
         ),
       }),
-      // 2. บันทึกเป็นไฟล์ (แยกตามวัน และเก็บไว้ 14 วัน)
       new winston.transports.DailyRotateFile({
         filename: 'logs/talk-v-%DATE%.log',
         datePattern: 'YYYY-MM-DD',
         zippedArchive: true,
-        maxSize: '20m', // ขนาดไฟล์สูงสุด
-        maxFiles: '14d', // เก็บย้อนหลัง 14 วัน
+        maxSize: '20m',
+        maxFiles: '14d',
         format: winston.format.combine(
           winston.format.timestamp(),
-          winston.format.json(), // ในไฟล์เก็บเป็น JSON เพื่อให้เอาไปวิเคราะห์ต่อง่าย
+          winston.format.json(),
         ),
       }),
     ],
   });
 
-  // ใช้ winstonLogger แทน Logger ปกติของ Nest
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: winstonLogger,
+    rawBody: true,
   });
 
   const config = app.get(ConfigService);
-  const logger = new Logger('Bootstrap'); // เรียกใช้งานผ่าน Logger ปกติได้เลย แต่มันจะใช้ไส้ในเป็น Winston แล้ว
+  const logger = new Logger('Bootstrap');
 
   const port = config.get<number>('PORT') || 3001;
-  const corsOrigin = config.get<string>('CORS_ORIGIN') || '*';
-  const allowedOrigins =
-    corsOrigin === '*'
-      ? '*'
-      : corsOrigin
-          .split(',')
-          .map((origin) => origin.trim().replace(/\/+$/, ''))
-          .filter(Boolean);
 
   logger.log('🚀 Starting Talk-V AI Backend...');
-  
+
   app.setGlobalPrefix('api');
+
+  // ✅ Serve static uploads (สำคัญ)
+  app.useStaticAssets(join(process.cwd(), 'uploads'), {
+    prefix: '/uploads/',
+  });
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -65,28 +62,14 @@ async function bootstrap() {
   );
 
   app.enableCors({
-    origin: (origin, callback) => {
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      if (allowedOrigins === '*') {
-        return callback(null, true);
-      }
-
-      const normalizedOrigin = origin.replace(/\/+$/, '');
-      if (allowedOrigins.includes(normalizedOrigin)) {
-        return callback(null, true);
-      }
-
-      return callback(new Error(`CORS blocked for origin: ${origin}`), false);
-    },
+    origin: true,
     credentials: true,
   });
 
   await app.listen(port);
-  logger.log(`🎉 Application is running on: http://localhost:${port}/api`);
-  logger.log(`🔌 WebSocket available at: ws://localhost:${port}`);
+
+  logger.log(`🎉 Backend running on: http://localhost:${port}/api`);
+  logger.log(`🌍 Public uploads URL should be: https://api.nighttime77.win/uploads/...`);
 }
 
 bootstrap().catch((error) => {
