@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -257,6 +257,7 @@ export class MessagingService {
     );
 
     // 🔄 Auto-Assign Rule Engine: ตรวจสอบกฎ auto-assign
+    console.log('Checking auto-assign rules...assignedAgentId:',conversation.assignedAgentId);
     if (!conversation.assignedAgentId) {
       try {
         const assignAgentId = await this.autoAssignRulesService.evaluateRules(
@@ -279,13 +280,30 @@ export class MessagingService {
       }
     }
 
-    // 🤖 Chatbot Flow Engine: ตรวจสอบว่ามี flow ที่ match กับข้อความหรือไม่
+    // 🤖 Chatbot Flow Engine
     let flowResponded = false;
-    try {
-      const matchingFlow = await this.chatbotFlowsService.findMatchingFlow(
+
+    // 1. Check for Active Flow (Waiting for Input)
+    console.log('Checking active flow...', conversation);
+    console.log('Checking active flow...', conversation.activeFlowId);
+    console.log('Checking active flow...', conversation.activeFlowNodeId);
+    console.log('Checking active flow...', conversation.flowResumeAt);
+    if (conversation.activeFlowId && conversation.activeFlowNodeId && !conversation.flowResumeAt) {
+      this.logger.log(`🔄 Resuming active flow for conv: ${conversation.id}`);
+      const flowResult = await this.flowEngine.continueFlow(conversation.id, data.content);
+      
+      if (flowResult && flowResult.messages.length > 0) {
+        flowResponded = true;
+        await this.handleFlowExecutionResult(platform, conversation, customer, flowResult);
+      }
+    } 
+    // 2. Check for New Flow Trigger (if no active flow)
+    else if (!conversation.activeFlowId) {
+       const matchingFlow = await this.chatbotFlowsService.findMatchingFlow(
         platform.organizationId,
         data.content,
       );
+      console.log('Matching flow:', matchingFlow);
       if (matchingFlow) {
         this.logger.log(`🔀 Chatbot flow matched: ${matchingFlow.name}`);
         const flowResult = await this.flowEngine.executeFlow(matchingFlow, {
@@ -296,157 +314,14 @@ export class MessagingService {
           organizationId: platform.organizationId,
         });
 
-        // Send flow response messages
-        if (flowResult.responded && flowResult.messages.length > 0) {
+        if (flowResult && flowResult.messages.length > 0) {
           flowResponded = true;
-          for (const msg of flowResult.messages) {
-            const msgText = msg.text || '';
-            let msgImageUrl = msg.imageUrl;
-            const msgLocation = msg.location;
-
-            // Resolve relative upload paths to full URLs for platform APIs
-            if (msgImageUrl && msgImageUrl.startsWith('/uploads')) {
-              const appPort = process.env.PORT || '3001';
-              msgImageUrl = `https://api.nighttime77.win${msgImageUrl}`;
-              console.log(`🔗 Resolved image URL for platform: ${msgImageUrl}`);
-            }
-
-            // ส่งข้อความ (ถ้ามี)
-            if (msgText && msgText.trim()) {
-              let platformMessageId: string | undefined;
-              if (platform.type === 'facebook') {
-                platformMessageId = await this.sendFacebookMessage(
-                  platform,
-                  customer.externalId,
-                  msgText,
-                  undefined, // ไม่ส่งรูปกับข้อความ
-                );
-              } else if (platform.type === 'instagram') {
-                platformMessageId = await this.sendInstagramMessage(
-                  platform,
-                  customer.externalId,
-                  msgText,
-                  undefined,
-                );
-              } else if (platform.type === 'whatsapp') {
-                platformMessageId = await this.sendWhatsAppMessage(
-                  platform,
-                  customer.externalId,
-                  msgText,
-                  undefined,
-                );
-              }
-
-              const textMessage = await this.prisma.message.create({
-                data: {
-                  organizationId: platform.organizationId,
-                  conversationId: conversation.id,
-                  senderType: 'agent',
-                  content: msgText,
-                  contentType: 'text',
-                  platformMessageId,
-                },
-              });
-              this.realtime.emitNewMessage(
-                platform.organizationId,
-                conversation.id,
-                textMessage,
-              );
-            }
-
-            // ส่งรูปภาพ (ถ้ามี)
-            if (msgImageUrl) {
-              let platformMessageId: string | undefined;
-              if (platform.type === 'facebook') {
-                console.log(`📤 Sending Facebook image: ${msgImageUrl}`);
-                platformMessageId = await this.sendFacebookMessage(
-                  platform,
-                  customer.externalId,
-                  '', // ไม่มีข้อความ
-                  msgImageUrl,
-                );
-              } else if (platform.type === 'instagram') {
-                platformMessageId = await this.sendInstagramMessage(
-                  platform,
-                  customer.externalId,
-                  '',
-                  msgImageUrl,
-                );
-              } else if (platform.type === 'whatsapp') {
-                platformMessageId = await this.sendWhatsAppMessage(
-                  platform,
-                  customer.externalId,
-                  '',
-                  msgImageUrl,
-                );
-              }
-
-              const imageMessage = await this.prisma.message.create({
-                data: {
-                  organizationId: platform.organizationId,
-                  conversationId: conversation.id,
-                  senderType: 'agent',
-                  content: '',
-                  contentType: 'image',
-                  platformMessageId,
-                  imageUrl: msgImageUrl,
-                },
-              });
-              this.realtime.emitNewMessage(
-                platform.organizationId,
-                conversation.id,
-                imageMessage,
-              );
-            }
-
-            // ส่ง location (ถ้ามี)
-            if (msgLocation && platform.type === 'whatsapp') {
-              const platformMessageId = await this.sendWhatsAppLocation(
-                platform,
-                customer.externalId,
-                msgLocation.latitude,
-                msgLocation.longitude,
-                msgLocation.name,
-                msgLocation.address,
-              );
-
-              const locationMessage = await this.prisma.message.create({
-                data: {
-                  organizationId: platform.organizationId,
-                  conversationId: conversation.id,
-                  senderType: 'agent',
-                  content: `📍 ${msgLocation.name || 'Location'}`,
-                  contentType: 'location',
-                  platformMessageId,
-                },
-              });
-              this.realtime.emitNewMessage(
-                platform.organizationId,
-                conversation.id,
-                locationMessage,
-              );
-            }
-          }
-        }
-
-        // Execute flow actions
-        for (const action of flowResult.actions) {
-          if (action.action === 'request_human') {
-            await this.prisma.conversation.update({
-              where: { id: conversation.id },
-              data: { requestHuman: true },
-            });
-          } else if (action.action === 'close') {
-            await this.prisma.conversation.update({
-              where: { id: conversation.id },
-              data: { status: 'RESOLVED' },
-            });
-          }
+          await this.handleFlowExecutionResult(platform, conversation, customer, flowResult);
         }
       }
-    } catch (error) {
-      this.logger.error(`❌ Chatbot flow error: ${error}`);
     }
+    
+
 
     // 🔌 Plugin System: รัน plugins ที่เปิดใช้งาน (ถ้า flow ไม่ได้ตอบ)
     let pluginResponded = false;
@@ -473,6 +348,125 @@ export class MessagingService {
       );
     }
   }
+    /**
+     * Helper to send messages from Flow Result
+     */
+    async handleFlowExecutionResult(platform: any, conversation: any, customer: any, flowResult: any) {
+        if (!flowResult.responded) return;
+
+        for (const msg of flowResult.messages) {
+            const msgText = msg.text || '';
+            let msgImageUrl = msg.imageUrl;
+            const msgLocation = msg.location;
+
+            // Resolve relative upload paths to full URLs for platform APIs
+            if (msgImageUrl && msgImageUrl.startsWith('/uploads')) {
+              msgImageUrl = `https://api.nighttime77.win${msgImageUrl}`;
+            }
+
+            // Send Text
+            if (msgText && msgText.trim()) {
+              await this.sendPlatformMessage(platform, customer.externalId, msgText, 'text');
+               const textMessage = await this.prisma.message.create({
+                data: {
+                  organizationId: platform.organizationId,
+                  conversationId: conversation.id,
+                  senderType: 'agent',
+                  content: msgText,
+                  contentType: 'text',
+                },
+              });
+              this.realtime.emitNewMessage(platform.organizationId, conversation.id, textMessage);
+            }
+
+            // Send Image
+            if (msgImageUrl) {
+              await this.sendPlatformMessage(platform, customer.externalId, msgImageUrl, 'image');
+              const imageMessage = await this.prisma.message.create({
+                data: {
+                  organizationId: platform.organizationId,
+                  conversationId: conversation.id,
+                  senderType: 'agent',
+                  content: '',
+                  contentType: 'image',
+                  imageUrl: msgImageUrl,
+                },
+              });
+              this.realtime.emitNewMessage(platform.organizationId, conversation.id, imageMessage);
+            }
+
+            // Send Location
+             if (msgLocation && platform.type === 'whatsapp') {
+               await this.sendWhatsAppLocation(
+                platform,
+                customer.externalId,
+                msgLocation.latitude,
+                msgLocation.longitude,
+                msgLocation.name,
+                msgLocation.address,
+              );
+               const locationMessage = await this.prisma.message.create({
+                data: {
+                  organizationId: platform.organizationId,
+                  conversationId: conversation.id,
+                  senderType: 'agent',
+                  content: `📍 ${msgLocation.name || 'Location'}`,
+                  contentType: 'location',
+                },
+              });
+              this.realtime.emitNewMessage(platform.organizationId, conversation.id, locationMessage);
+             }
+        }
+
+        // Execute actions
+        for (const action of flowResult.actions) {
+          if (action.action === 'request_human') {
+            await this.prisma.conversation.update({
+              where: { id: conversation.id },
+              data: { requestHuman: true },
+            });
+          } else if (action.action === 'close') {
+             await this.prisma.conversation.update({
+              where: { id: conversation.id },
+              data: { 
+                  status: 'RESOLVED',
+                  activeFlowId: null,
+                  activeFlowNodeId: null
+              },
+            });
+          }
+        }
+    }
+
+    /**
+     * Unified send method (Simplified)
+     */
+    async sendPlatformMessage(platform: any, recipientId: string, content: string, type: 'text' | 'image') {
+        if (type === 'text') {
+             if (platform.type === 'facebook') return this.sendFacebookMessage(platform, recipientId, content);
+             if (platform.type === 'instagram') return this.sendInstagramMessage(platform, recipientId, content);
+             if (platform.type === 'whatsapp') return this.sendWhatsAppMessage(platform, recipientId, content);
+        } else if (type === 'image') {
+             if (platform.type === 'facebook') return this.sendFacebookMessage(platform, recipientId, '', content);
+             if (platform.type === 'instagram') return this.sendInstagramMessage(platform, recipientId, '', content);
+             if (platform.type === 'whatsapp') return this.sendWhatsAppMessage(platform, recipientId, '', content);
+        }
+    }
+
+    /**
+     * Public method for Scheduler to send messages
+     */
+    async sendFlowMessages(conversationId: string, messages: any[]) {
+        const conversation = await this.prisma.conversation.findUnique({
+            where: { id: conversationId },
+            include: { platform: true, customer: true }
+        });
+        if (!conversation) return;
+
+        const flowResult = { responded: true, messages, actions: [] };
+        await this.handleFlowExecutionResult(conversation.platform, conversation, conversation.customer, flowResult);
+    }
+
   async getConversations(
     organizationId: string,
     assignedTo?: string,

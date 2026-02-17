@@ -2,6 +2,8 @@ import { Injectable, Logger, NotFoundException, BadRequestException } from '@nes
 import { PrismaService } from '../../prisma/prisma.service';
 import { MessagingService } from '../messaging/messaging.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { toZonedTime, format } from 'date-fns-tz';
 
 @Injectable()
 export class BroadcastsService {
@@ -60,6 +62,7 @@ export class BroadcastsService {
       platformType?: string;
       filterTags?: string[];
       scheduledAt?: string;
+      timeZone?: string;
     },
   ) {
     // Find matching recipients
@@ -91,6 +94,7 @@ export class BroadcastsService {
         platformType: data.platformType,
         filterTags: data.filterTags as any,
         scheduledAt: data.scheduledAt ? new Date(data.scheduledAt) : null,
+        timeZone: data.timeZone || 'Asia/Bangkok',
         totalRecipients: customers.length,
         createdBy: userId,
         status: data.scheduledAt ? 'scheduled' : 'draft',
@@ -101,13 +105,73 @@ export class BroadcastsService {
             status: 'pending',
           })),
         },
-      },
+      } as any,
       include: {
         _count: { select: { recipients: true } },
       },
     });
 
     return broadcast;
+  }
+
+  /**
+   * Check for scheduled broadcasts every minute
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async checkScheduledBroadcasts() {
+    this.logger.log('⏰ Checking for scheduled broadcasts...');
+
+    try {
+      // Find broadcasts that are scheduled and not yet sent
+      const scheduledBroadcasts = await this.prisma.broadcast.findMany({
+        where: {
+          status: 'scheduled',
+          scheduledAt: { not: null },
+        },
+      });
+
+      const now = new Date(); // Server time (UTC)
+
+      for (const broadcast of scheduledBroadcasts) {
+        if (!broadcast.scheduledAt) continue;
+
+        // Convert current time to broadcast's timezone
+        const timeZone = (broadcast as any).timeZone || 'Asia/Bangkok';
+        const zonedNow = toZonedTime(now, timeZone);
+        
+        // Convert scheduled time to the same timezone for comparison
+        // Note: scheduledAt is stored as UTC in DB, so we need to treat it carefully.
+        // Assuming the user input scheduledAt relative to their timezone.
+        // If scheduledAt matches the target time in the target timezone.
+        
+        // Simpler approach: Check if "Now" >= "Scheduled Time"
+        // But since scheduledAt is a Date object, it's absolute point in time.
+        // If the frontend sends ISO string (UTC), then we just compare UTC.
+        
+        // However, if the user "thinks" in Thai time, they pick "10:00 AM".
+        // Frontend should convert "10:00 AM Thai" -> "03:00 AM UTC" and send it.
+        // If that's the case, simple Date comparison works.
+        
+        // BUT, if we want to be explicit about timezone logic on backend:
+        // Let's assume scheduledAt IS the absolute trigger time.
+        if (now >= broadcast.scheduledAt) {
+            this.logger.log(`🚀 Triggering scheduled broadcast: ${broadcast.name} (${broadcast.id})`);
+            
+            // Mark as sending immediately to prevent double-send
+            await this.prisma.broadcast.update({
+                where: { id: broadcast.id },
+                data: { status: 'sending' },
+            });
+            
+            // Process async
+            this.processBroadcastSending(broadcast.id, broadcast.organizationId).catch(err => {
+                this.logger.error(`Failed to process broadcast ${broadcast.id}`, err);
+            });
+        }
+      }
+    } catch (error) {
+      this.logger.error('❌ Error checking scheduled broadcasts:', error);
+    }
   }
 
   /**

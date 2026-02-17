@@ -46,6 +46,7 @@ export class BroadcastsController {
       platformType?: string;
       filterTags?: string[];
       scheduledAt?: string;
+      timeZone?: string;
     },
   ) {
     const userId = req.user?.id || req.user?.userId || req.user?.sub;

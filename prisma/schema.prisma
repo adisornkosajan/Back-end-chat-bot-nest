@@ -142,6 +142,10 @@ model Conversation {
   requestHuman     Boolean          @default(false) // Customer requested human agent
   firstResponseAt  DateTime?        // When agent first responded
   lastResponseAt   DateTime?        // Last agent response time
+  activeFlowId     String?          // Currently active chatbot flow
+  activeFlowNodeId String?          // Current node in the flow
+  flowState        Json?            // Variables collected during flow
+  flowResumeAt     DateTime?        // When to resume flow (for delays)
   lastMessageAt    DateTime         @default(now())
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
@@ -408,6 +412,7 @@ model Broadcast {
   platformType    String?              // facebook, instagram, whatsapp — null = all
   status          String               @default("draft") // draft, scheduled, sending, sent, failed
   scheduledAt     DateTime?
+  timeZone        String?              @default("Asia/Bangkok") // Timezone for scheduling
   sentAt          DateTime?
   totalRecipients Int                  @default(0)
   sentCount       Int                  @default(0)

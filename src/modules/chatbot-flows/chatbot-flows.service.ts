@@ -146,9 +146,11 @@ export class ChatbotFlowsService {
     organizationId: string,
     message: string,
   ): Promise<any | null> {
+    console.log('Finding matching flow for message:', message);
     const activeFlows = await this.prisma.chatbotFlow.findMany({
       where: { organizationId, isActive: true },
     });
+    console.log('Active flows:', activeFlows);
 
     const lowerMessage = message.toLowerCase();
 
