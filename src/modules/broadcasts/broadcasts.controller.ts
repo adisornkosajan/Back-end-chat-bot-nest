@@ -7,10 +7,10 @@ import {
   Body,
   UseGuards,
   Req,
+  Patch,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { BroadcastsService } from './broadcasts.service';
-
 @Controller('broadcasts')
 @UseGuards(AuthGuard('jwt'))
 export class BroadcastsController {
@@ -30,6 +30,30 @@ export class BroadcastsController {
   @Get(':id')
   async get(@Req() req: any, @Param('id') id: string) {
     return this.broadcastsService.getBroadcast(req.user.organizationId, id);
+  }
+  /**
+   * PATCH /api/broadcasts/:id — Update broadcast (draft / scheduled)
+   */
+  @Patch(':id')
+  async update(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body()
+    body: {
+      name?: string;
+      message?: string;
+      imageUrl?: string;
+      platformType?: string;
+      filterTags?: string[];
+      scheduledAt?: string;
+      timeZone?: string;
+    },
+  ) {
+    return this.broadcastsService.updateBroadcast(
+      req.user.organizationId,
+      id,
+      body,
+    );
   }
 
   /**
@@ -71,5 +95,15 @@ export class BroadcastsController {
   @Delete(':id')
   async delete(@Req() req: any, @Param('id') id: string) {
     return this.broadcastsService.deleteBroadcast(req.user.organizationId, id);
+  }
+
+  @Patch(':id/pause')
+  async pause(@Req() req: any, @Param('id') id: string) {
+    return this.broadcastsService.pauseBroadcast(req.user.organizationId, id);
+  }
+
+  @Patch(':id/resume')
+  async resume(@Req() req: any, @Param('id') id: string) {
+    return this.broadcastsService.resumeBroadcast(req.user.organizationId, id);
   }
 }

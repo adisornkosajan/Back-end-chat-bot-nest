@@ -1,9 +1,15 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MessagingService } from '../messaging/messaging.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { toZonedTime, format } from 'date-fns-tz';
+import { BroadcastStatus, BroadcastRecipientStatus } from '@prisma/client';
 
 @Injectable()
 export class BroadcastsService {
@@ -97,12 +103,14 @@ export class BroadcastsService {
         timeZone: data.timeZone || 'Asia/Bangkok',
         totalRecipients: customers.length,
         createdBy: userId,
-        status: data.scheduledAt ? 'scheduled' : 'draft',
+        status: data.scheduledAt
+          ? BroadcastStatus.scheduled
+          : BroadcastStatus.draft,
         recipients: {
           create: customers.map((c) => ({
             customerId: c.id,
             platformId: c.platformId,
-            status: 'pending',
+            status: BroadcastRecipientStatus.pending,
           })),
         },
       } as any,
@@ -125,7 +133,7 @@ export class BroadcastsService {
       // Find broadcasts that are scheduled and not yet sent
       const scheduledBroadcasts = await this.prisma.broadcast.findMany({
         where: {
-          status: 'scheduled',
+          status: BroadcastStatus.scheduled,
           scheduledAt: { not: null },
         },
       });
@@ -138,35 +146,43 @@ export class BroadcastsService {
         // Convert current time to broadcast's timezone
         const timeZone = (broadcast as any).timeZone || 'Asia/Bangkok';
         const zonedNow = toZonedTime(now, timeZone);
-        
+
         // Convert scheduled time to the same timezone for comparison
         // Note: scheduledAt is stored as UTC in DB, so we need to treat it carefully.
         // Assuming the user input scheduledAt relative to their timezone.
         // If scheduledAt matches the target time in the target timezone.
-        
+
         // Simpler approach: Check if "Now" >= "Scheduled Time"
         // But since scheduledAt is a Date object, it's absolute point in time.
         // If the frontend sends ISO string (UTC), then we just compare UTC.
-        
+
         // However, if the user "thinks" in Thai time, they pick "10:00 AM".
         // Frontend should convert "10:00 AM Thai" -> "03:00 AM UTC" and send it.
         // If that's the case, simple Date comparison works.
-        
+
         // BUT, if we want to be explicit about timezone logic on backend:
         // Let's assume scheduledAt IS the absolute trigger time.
         if (now >= broadcast.scheduledAt) {
-            this.logger.log(`🚀 Triggering scheduled broadcast: ${broadcast.name} (${broadcast.id})`);
-            
-            // Mark as sending immediately to prevent double-send
-            await this.prisma.broadcast.update({
-                where: { id: broadcast.id },
-                data: { status: 'sending' },
-            });
-            
-            // Process async
-            this.processBroadcastSending(broadcast.id, broadcast.organizationId).catch(err => {
-                this.logger.error(`Failed to process broadcast ${broadcast.id}`, err);
-            });
+          this.logger.log(
+            `🚀 Triggering scheduled broadcast: ${broadcast.name} (${broadcast.id})`,
+          );
+
+          // Mark as sending immediately to prevent double-send
+          await this.prisma.broadcast.update({
+            where: { id: broadcast.id },
+            data: { status: BroadcastStatus.sending },
+          });
+
+          // Process async
+          this.processBroadcastSending(
+            broadcast.id,
+            broadcast.organizationId,
+          ).catch((err) => {
+            this.logger.error(
+              `Failed to process broadcast ${broadcast.id}`,
+              err,
+            );
+          });
         }
       }
     } catch (error) {
@@ -182,7 +198,7 @@ export class BroadcastsService {
       where: { id: broadcastId, organizationId },
       include: {
         recipients: {
-          where: { status: 'pending' },
+          where: { status: BroadcastRecipientStatus.pending },
           include: {
             // We need platform and customer info
           },
@@ -194,14 +210,17 @@ export class BroadcastsService {
       throw new NotFoundException('Broadcast not found');
     }
 
-    if (broadcast.status === 'sent' || broadcast.status === 'sending') {
+    if (
+      broadcast.status === BroadcastStatus.sent ||
+      broadcast.status === BroadcastStatus.sending
+    ) {
       throw new BadRequestException('Broadcast already sent or sending');
     }
 
     // Update status to sending
     await this.prisma.broadcast.update({
       where: { id: broadcastId },
-      data: { status: 'sending' },
+      data: { status: BroadcastStatus.sending },
     });
 
     // Process in background (fire and forget)
@@ -231,7 +250,7 @@ export class BroadcastsService {
       }
 
       const recipients = await this.prisma.broadcastRecipient.findMany({
-        where: { broadcastId, status: 'pending' },
+        where: { broadcastId, status: BroadcastRecipientStatus.pending },
       });
 
       for (const recipient of recipients) {
@@ -260,12 +279,13 @@ export class BroadcastsService {
               broadcast.imageUrl || undefined,
             );
           } else if (platform.type === 'instagram') {
-            platformMessageId = await this.messagingService.sendInstagramMessage(
-              platform,
-              customer.externalId,
-              broadcast.message,
-              broadcast.imageUrl || undefined,
-            );
+            platformMessageId =
+              await this.messagingService.sendInstagramMessage(
+                platform,
+                customer.externalId,
+                broadcast.message,
+                broadcast.imageUrl || undefined,
+              );
           } else if (platform.type === 'whatsapp') {
             platformMessageId = await this.messagingService.sendWhatsAppMessage(
               platform,
@@ -324,7 +344,11 @@ export class BroadcastsService {
           // Update recipient status
           await this.prisma.broadcastRecipient.update({
             where: { id: recipient.id },
-            data: { status: 'sent', sentAt: new Date(), error: null },
+            data: {
+              status: BroadcastRecipientStatus.sent,
+              sentAt: new Date(),
+              error: null,
+            },
           });
 
           sentCount++;
@@ -337,7 +361,7 @@ export class BroadcastsService {
           await this.prisma.broadcastRecipient.update({
             where: { id: recipient.id },
             data: {
-              status: 'failed',
+              status: BroadcastRecipientStatus.failed,
               error: error?.message || 'Unknown error',
             },
           });
@@ -349,7 +373,8 @@ export class BroadcastsService {
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
 
-      const finalStatus = sentCount > 0 ? 'sent' : 'failed';
+      const finalStatus =
+        sentCount > 0 ? BroadcastStatus.sent : BroadcastStatus.failed;
 
       // Always finalize status so UI doesn't get stuck in "sending"
       await this.prisma.broadcast.update({
@@ -366,7 +391,10 @@ export class BroadcastsService {
         `✅ Broadcast ${broadcastId} completed: ${sentCount} sent, ${failedCount} failed`,
       );
     } catch (error: any) {
-      this.logger.error(`❌ Broadcast ${broadcastId} crashed during sending`, error);
+      this.logger.error(
+        `❌ Broadcast ${broadcastId} crashed during sending`,
+        error,
+      );
 
       // Mark any remaining pending recipients as failed and finalize broadcast.
       const pending = await this.prisma.broadcastRecipient.updateMany({
@@ -403,7 +431,9 @@ export class BroadcastsService {
     }
 
     if (broadcast.status === 'sending') {
-      throw new BadRequestException('Cannot delete a broadcast that is currently sending');
+      throw new BadRequestException(
+        'Cannot delete a broadcast that is currently sending',
+      );
     }
 
     await this.prisma.$transaction([
@@ -413,5 +443,91 @@ export class BroadcastsService {
       this.prisma.broadcast.delete({ where: { id: broadcastId } }),
     ]);
     return { message: 'Broadcast deleted successfully' };
+  }
+
+  async updateBroadcast(
+    organizationId: string,
+    broadcastId: string,
+    data: {
+      name?: string;
+      message?: string;
+      imageUrl?: string;
+      platformType?: string;
+      filterTags?: string[];
+      scheduledAt?: string;
+      timeZone?: string;
+    },
+  ) {
+    const broadcast = await this.prisma.broadcast.findFirst({
+      where: { id: broadcastId, organizationId },
+    });
+
+    if (!broadcast) {
+      throw new NotFoundException('Broadcast not found');
+    }
+
+    if (
+      broadcast.status === BroadcastStatus.sending ||
+      broadcast.status === BroadcastStatus.sent
+    ) {
+      throw new BadRequestException(
+        'Cannot edit a broadcast that is already sending or sent',
+      );
+    }
+
+    const updated = await this.prisma.broadcast.update({
+      where: { id: broadcastId },
+      data: {
+        name: data.name ?? broadcast.name,
+        message: data.message ?? broadcast.message,
+        imageUrl: data.imageUrl ?? broadcast.imageUrl,
+        platformType: data.platformType ?? broadcast.platformType,
+        filterTags: data.filterTags ?? broadcast.filterTags,
+        scheduledAt: data.scheduledAt ? new Date(data.scheduledAt) : null,
+        timeZone: data.timeZone ?? broadcast.timeZone,
+        status: data.scheduledAt
+          ? BroadcastStatus.scheduled
+          : BroadcastStatus.draft,
+      } as any,
+      include: {
+        _count: { select: { recipients: true } },
+      },
+    });
+
+    return updated;
+  }
+
+  async pauseBroadcast(organizationId: string, broadcastId: string) {
+    const broadcast = await this.prisma.broadcast.findFirst({
+      where: { id: broadcastId, organizationId },
+    });
+
+    if (!broadcast) throw new NotFoundException('Broadcast not found');
+
+    if (broadcast.status !== BroadcastStatus.scheduled) {
+      throw new BadRequestException('Only scheduled broadcasts can be paused');
+    }
+
+    return this.prisma.broadcast.update({
+      where: { id: broadcastId },
+      data: { status: BroadcastStatus.paused },
+    });
+  }
+
+  async resumeBroadcast(organizationId: string, broadcastId: string) {
+    const broadcast = await this.prisma.broadcast.findFirst({
+      where: { id: broadcastId, organizationId },
+    });
+
+    if (!broadcast) throw new NotFoundException('Broadcast not found');
+
+    if (broadcast.status !== BroadcastStatus.paused) {
+      throw new BadRequestException('Only paused broadcasts can be resumed');
+    }
+
+    return this.prisma.broadcast.update({
+      where: { id: broadcastId },
+      data: { status: BroadcastStatus.scheduled },
+    });
   }
 }

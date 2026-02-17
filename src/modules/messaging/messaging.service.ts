@@ -284,10 +284,6 @@ export class MessagingService {
     let flowResponded = false;
 
     // 1. Check for Active Flow (Waiting for Input)
-    console.log('Checking active flow...', conversation);
-    console.log('Checking active flow...', conversation.activeFlowId);
-    console.log('Checking active flow...', conversation.activeFlowNodeId);
-    console.log('Checking active flow...', conversation.flowResumeAt);
     if (conversation.activeFlowId && conversation.activeFlowNodeId && !conversation.flowResumeAt) {
       this.logger.log(`🔄 Resuming active flow for conv: ${conversation.id}`);
       const flowResult = await this.flowEngine.continueFlow(conversation.id, data.content);

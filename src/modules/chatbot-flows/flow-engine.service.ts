@@ -67,10 +67,7 @@ export class FlowEngineService {
       switch (currentNode.type) {
         case 'message': {
           if (currentNode.data.text) {
-            const text = this.replaceVariables(
-              currentNode.data.text,
-              context,
-            );
+            const text = this.replaceVariables(currentNode.data.text, context);
             result.messages.push({ text });
             result.responded = true;
           }
@@ -88,10 +85,7 @@ export class FlowEngineService {
         }
 
         case 'condition': {
-          const conditionMet = this.evaluateCondition(
-            currentNode,
-            context,
-          );
+          const conditionMet = this.evaluateCondition(currentNode, context);
 
           currentNode = conditionMet
             ? nodeMap.get(currentNode.conditionTrueNodeId || '')
@@ -209,11 +203,7 @@ export class FlowEngineService {
       include: { organization: true, platform: true },
     });
 
-    if (
-      !conversation ||
-      !(conversation as any).activeFlowId ||
-      !(conversation as any).activeFlowNodeId
-    ) {
+    if (!conversation || !(conversation as any).activeFlowId) {
       return null;
     }
 

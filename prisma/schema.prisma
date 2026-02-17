@@ -31,6 +31,22 @@ enum PlanTier {
   ENTERPRISE
 }
 
+enum BroadcastStatus {
+  draft
+  scheduled
+  paused
+  sending
+  sent
+  failed
+}
+
+enum BroadcastRecipientStatus {
+  pending
+  sent
+  failed
+}
+
+
 enum LicenseStatus {
   ACTIVE
   SUSPENDED
@@ -410,7 +426,7 @@ model Broadcast {
   message         String               @db.Text
   imageUrl        String?              @db.Text
   platformType    String?              // facebook, instagram, whatsapp — null = all
-  status          String               @default("draft") // draft, scheduled, sending, sent, failed
+  status          BroadcastStatus     @default(draft)
   scheduledAt     DateTime?
   timeZone        String?              @default("Asia/Bangkok") // Timezone for scheduling
   sentAt          DateTime?
@@ -434,7 +450,7 @@ model BroadcastRecipient {
   broadcast   Broadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
   customerId  String
   platformId  String
-  status      String    @default("pending") // pending, sent, failed
+  status BroadcastRecipientStatus @default(pending)
   sentAt      DateTime?
   error       String?   @db.Text
   createdAt   DateTime  @default(now())
