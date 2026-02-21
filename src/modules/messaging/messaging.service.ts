@@ -16,6 +16,30 @@ import { AutoAssignRulesService } from '../auto-assign-rules/auto-assign-rules.s
 import axios from 'axios';
 import FormData = require('form-data');
 
+type FlowQuickReplyOption = {
+  title: string;
+  payload: string;
+};
+
+type FlowButtonOption = {
+  type: 'postback' | 'web_url';
+  title: string;
+  payload?: string;
+  url?: string;
+};
+
+type FlowCarouselCard = {
+  title: string;
+  subtitle?: string;
+  imageUrl?: string;
+  buttons?: FlowButtonOption[];
+};
+
+type PendingReplyAliasesState = {
+  aliases: Record<string, string>;
+  expiresAt: string;
+};
+
 @Injectable()
 export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
@@ -140,7 +164,7 @@ export class MessagingService {
 
     if (!conversation) {
       this.logger.log(
-        `💬 Creating new conversation for customer: ${customer.id}`,
+        `Creating new conversation for customer: ${customer.id}`,
       );
       conversation = await this.prisma.conversation.create({
         data: {
@@ -153,9 +177,54 @@ export class MessagingService {
       this.logger.debug(`Conversation found: ${conversation.id}`);
     }
 
-    this.logger.log(`📝 Creating message in conversation: ${conversation.id}`);
+    let flowInputContent = data.content;
+    const conversationFlowState = this.toFlowStateObject(
+      (conversation as any).flowState,
+    );
+    const pendingReplyAliases = conversationFlowState.pendingReplyAliases;
 
-    // Prevent duplicate inserts when provider/webhook retries the same message ID.
+    // Map plain-text reply (e.g. "A") to payload from last interactive message.
+    if (!conversationFlowState.awaitingVariable && data.contentType === 'text') {
+      const mappedPayload = this.resolvePendingReplyPayload(
+        data.content,
+        pendingReplyAliases,
+      );
+
+      if (mappedPayload) {
+        flowInputContent = this.normalizeStructuredPayload(mappedPayload);
+        this.logger.debug(
+          `Mapped text reply "${data.content}" -> payload "${mappedPayload}"`,
+        );
+
+        const { pendingReplyAliases: _unused, ...nextFlowState } =
+          conversationFlowState;
+        const flowStateToSave =
+          Object.keys(nextFlowState).length > 0 ? nextFlowState : null;
+
+        await this.prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { flowState: flowStateToSave } as any,
+        });
+        conversation = { ...conversation, flowState: flowStateToSave as any };
+      } else if (
+        pendingReplyAliases &&
+        this.isPendingReplyAliasesExpired(pendingReplyAliases)
+      ) {
+        const { pendingReplyAliases: _unused, ...nextFlowState } =
+          conversationFlowState;
+        const flowStateToSave =
+          Object.keys(nextFlowState).length > 0 ? nextFlowState : null;
+
+        await this.prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { flowState: flowStateToSave } as any,
+        });
+        conversation = { ...conversation, flowState: flowStateToSave as any };
+      }
+    }
+
+    this.logger.log(`Creating message in conversation: ${conversation.id}`);
+
     if (data.messageId) {
       const existingMessage = await this.prisma.message.findFirst({
         where: {
@@ -271,7 +340,7 @@ export class MessagingService {
       try {
         const assignAgentId = await this.autoAssignRulesService.evaluateRules(
           platform.organizationId,
-          data.content,
+          flowInputContent,
           platform.type,
         );
         if (assignAgentId) {
@@ -291,6 +360,19 @@ export class MessagingService {
 
     // 🤖 Chatbot Flow Engine
     let flowResponded = false;
+    const isStructuredReplyInput =
+      data.contentType === 'quick_reply' ||
+      data.contentType === 'postback' ||
+      data.contentType === 'interactive' ||
+      flowInputContent !== data.content;
+
+    if (
+      data.contentType === 'quick_reply' ||
+      data.contentType === 'postback' ||
+      data.contentType === 'interactive'
+    ) {
+      flowInputContent = this.normalizeStructuredPayload(flowInputContent);
+    }
 
     // 1. Check for Active Flow (Waiting for Input)
     if (
@@ -301,7 +383,7 @@ export class MessagingService {
       this.logger.log(`🔄 Resuming active flow for conv: ${conversation.id}`);
       const flowResult = await this.flowEngine.continueFlow(
         conversation.id,
-        data.content,
+        flowInputContent,
       );
 
       if (flowResult && flowResult.messages.length > 0) {
@@ -318,13 +400,13 @@ export class MessagingService {
     else if (!conversation.activeFlowId) {
       const matchingFlow = await this.chatbotFlowsService.findMatchingFlow(
         platform.organizationId,
-        data.content,
+        flowInputContent,
       );
       console.log('Matching flow:', matchingFlow);
       if (matchingFlow) {
         this.logger.log(`🔀 Chatbot flow matched: ${matchingFlow.name}`);
         const flowResult = await this.flowEngine.executeFlow(matchingFlow, {
-          customerMessage: data.content,
+          customerMessage: flowInputContent,
           customerId: customer.id,
           platform,
           conversationId: conversation.id,
@@ -355,7 +437,7 @@ export class MessagingService {
     }
 
     // 🤖 AI Auto-Reply: ตอบกลับอัตโนมัติด้วย AI (ถ้า Flow และ Plugin ไม่ได้ตอบ)
-    if (!flowResponded && !pluginResponded) {
+    if (!flowResponded && !pluginResponded && !isStructuredReplyInput) {
       await this.sendAiAutoReply(
         platform,
         conversation,
@@ -364,10 +446,442 @@ export class MessagingService {
       );
     } else {
       this.logger.log(
-        `⏭️ Skipping AI auto-reply because ${flowResponded ? 'chatbot flow' : 'plugin'} already responded`,
+        `⏭️ Skipping AI auto-reply because ${flowResponded ? 'chatbot flow' : pluginResponded ? 'plugin' : 'structured reply input'} already handled`,
       );
     }
   }
+
+  private truncateText(value: string, maxLength: number) {
+    if (!value) return '';
+    return value.length > maxLength ? value.slice(0, maxLength) : value;
+  }
+
+  private toMetaButtons(buttons: FlowButtonOption[] = []) {
+    return buttons
+      .map((button) => {
+        const type = button.type === 'web_url' ? 'web_url' : 'postback';
+        const title = this.truncateText((button.title || '').trim(), 20);
+
+        if (!title) return null;
+
+        if (type === 'web_url') {
+          const url = (button.url || '').trim();
+          if (!url) return null;
+          return { type: 'web_url', title, url };
+        }
+
+        const payload = this.truncateText((button.payload || '').trim(), 1000);
+        if (!payload) return null;
+        return { type: 'postback', title, payload };
+      })
+      .filter((button): button is NonNullable<typeof button> => !!button);
+  }
+
+  private async sendMetaApiMessage(
+    platform: any,
+    recipientId: string,
+    messagePayload: any,
+  ): Promise<string | undefined> {
+    const pageToken = platform.accessToken;
+    if (!pageToken) {
+      throw new Error(`${platform.type} access token not found`);
+    }
+
+    const response = await axios.post(
+      'https://graph.facebook.com/v21.0/me/messages',
+      {
+        messaging_type: 'RESPONSE',
+        recipient: { id: recipientId },
+        message: messagePayload,
+      },
+      {
+        params: { access_token: pageToken },
+      },
+    );
+
+    return this.extractPlatformMessageId(response.data);
+  }
+
+  private async sendMetaQuickRepliesMessage(
+    platform: any,
+    recipientId: string,
+    text: string,
+    quickReplies: FlowQuickReplyOption[],
+  ): Promise<string | undefined> {
+    const normalizedQuickReplies = (quickReplies || [])
+      .map((reply) => ({
+        content_type: 'text',
+        title: this.truncateText((reply.title || '').trim(), 20),
+        payload: this.truncateText((reply.payload || '').trim(), 1000),
+      }))
+      .filter((reply) => reply.title && reply.payload)
+      .slice(0, 13);
+
+    if (normalizedQuickReplies.length === 0) {
+      return undefined;
+    }
+
+    const quickReplyText = this.truncateText(
+      (text || 'Please choose an option:').trim(),
+      640,
+    );
+
+    return this.sendMetaApiMessage(platform, recipientId, {
+      text: quickReplyText,
+      quick_replies: normalizedQuickReplies,
+    });
+  }
+
+  private async sendMetaButtonTemplateMessage(
+    platform: any,
+    recipientId: string,
+    text: string,
+    buttons: FlowButtonOption[],
+  ): Promise<string | undefined> {
+    const normalizedButtons = this.toMetaButtons(buttons).slice(0, 3);
+    if (normalizedButtons.length === 0) {
+      return undefined;
+    }
+
+    const buttonText = this.truncateText(
+      (text || 'Please choose an option:').trim(),
+      640,
+    );
+
+    return this.sendMetaApiMessage(platform, recipientId, {
+      attachment: {
+        type: 'template',
+        payload: {
+          template_type: 'button',
+          text: buttonText,
+          buttons: normalizedButtons,
+        },
+      },
+    });
+  }
+
+  private async sendMetaCarouselTemplateMessage(
+    platform: any,
+    recipientId: string,
+    cards: FlowCarouselCard[],
+    introText?: string,
+  ): Promise<string | undefined> {
+    const normalizedCards = (cards || [])
+      .map((card) => {
+        const title = this.truncateText((card.title || '').trim(), 80);
+        if (!title) return null;
+
+        const subtitle = card.subtitle
+          ? this.truncateText(card.subtitle.trim(), 80)
+          : undefined;
+        const imageUrl = (card.imageUrl || '').trim() || undefined;
+        const buttons = this.toMetaButtons(card.buttons || []).slice(0, 3);
+
+        return {
+          title,
+          ...(subtitle ? { subtitle } : {}),
+          ...(imageUrl ? { image_url: imageUrl } : {}),
+          ...(buttons.length > 0 ? { buttons } : {}),
+        };
+      })
+      .filter((card): card is NonNullable<typeof card> => !!card)
+      .slice(0, 10);
+
+    if (normalizedCards.length === 0) {
+      return undefined;
+    }
+
+    let platformMessageId: string | undefined;
+
+    if (introText?.trim()) {
+      platformMessageId = await this.sendMetaApiMessage(platform, recipientId, {
+        text: this.truncateText(introText.trim(), 640),
+      });
+    }
+
+    const carouselMessageId = await this.sendMetaApiMessage(
+      platform,
+      recipientId,
+      {
+        attachment: {
+          type: 'template',
+          payload: {
+            template_type: 'generic',
+            elements: normalizedCards,
+          },
+        },
+      },
+    );
+
+    return carouselMessageId || platformMessageId;
+  }
+
+  private async sendWhatsAppApiMessage(
+    platform: any,
+    recipientPhone: string,
+    payload: Record<string, any>,
+  ): Promise<string | undefined> {
+    const phoneNumberId = platform.pageId;
+    const accessToken = platform.accessToken;
+
+    if (!phoneNumberId || !accessToken) {
+      throw new Error('WhatsApp credentials not found');
+    }
+
+    const response = await axios.post(
+      `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: recipientPhone,
+        ...payload,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    return this.extractPlatformMessageId(response.data);
+  }
+
+  private toWhatsAppReplyOptions(
+    quickReplies: FlowQuickReplyOption[],
+    buttons: FlowButtonOption[],
+  ) {
+    const options: Array<{ id: string; title: string }> = [];
+    const seenIds = new Set<string>();
+
+    const addOption = (title?: string, payload?: string) => {
+      const normalizedTitle = this.truncateText((title || '').trim(), 20);
+      const normalizedPayload = this.truncateText(
+        this.normalizeStructuredPayload(payload || ''),
+        256,
+      );
+      if (!normalizedTitle || !normalizedPayload) return;
+      if (seenIds.has(normalizedPayload)) return;
+
+      seenIds.add(normalizedPayload);
+      options.push({
+        id: normalizedPayload,
+        title: normalizedTitle,
+      });
+    };
+
+    quickReplies.forEach((reply) => addOption(reply.title, reply.payload));
+
+    buttons.forEach((button) => {
+      if (button.type === 'postback') {
+        addOption(button.title, button.payload);
+      }
+    });
+
+    return options;
+  }
+
+  private async sendWhatsAppInteractiveReplyOptions(
+    platform: any,
+    recipientPhone: string,
+    text: string,
+    options: Array<{ id: string; title: string }>,
+  ): Promise<string | undefined> {
+    const bodyText = this.truncateText(
+      (text || 'Please choose an option:').trim(),
+      1024,
+    );
+    const normalizedOptions = options.filter((option) => option.id && option.title);
+
+    if (normalizedOptions.length === 0) {
+      return undefined;
+    }
+
+    if (normalizedOptions.length <= 3) {
+      return this.sendWhatsAppApiMessage(platform, recipientPhone, {
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          body: { text: bodyText },
+          action: {
+            buttons: normalizedOptions.slice(0, 3).map((option) => ({
+              type: 'reply',
+              reply: {
+                id: option.id,
+                title: option.title,
+              },
+            })),
+          },
+        },
+      });
+    }
+
+    return this.sendWhatsAppApiMessage(platform, recipientPhone, {
+      type: 'interactive',
+      interactive: {
+        type: 'list',
+        body: { text: bodyText },
+        action: {
+          button: 'Choose option',
+          sections: [
+            {
+              title: 'Options',
+              rows: normalizedOptions.slice(0, 10).map((option) => ({
+                id: option.id,
+                title: this.truncateText(option.title, 24),
+              })),
+            },
+          ],
+        },
+      },
+    });
+  }
+
+  private buildInteractiveFallbackText(
+    text: string,
+    quickReplies: FlowQuickReplyOption[],
+    buttons: FlowButtonOption[],
+    carousel: FlowCarouselCard[],
+  ) {
+    const lines: string[] = [];
+
+    if (text?.trim()) {
+      lines.push(text.trim());
+    }
+
+    if (quickReplies.length > 0) {
+      lines.push('Options:');
+      quickReplies.forEach((reply, index) => {
+        if (reply.title && reply.payload) {
+          lines.push(`${index + 1}. ${reply.title}`);
+        }
+      });
+    }
+
+    if (buttons.length > 0) {
+      const hasOnlyLinks = buttons.every(
+        (button) => button.type === 'web_url' && !!button.url,
+      );
+      lines.push(hasOnlyLinks ? 'Links:' : 'Buttons:');
+      buttons.forEach((button, index) => {
+        if (!button.title) return;
+        if (button.type === 'web_url' && button.url) {
+          lines.push(`${index + 1}. ${button.title}: ${button.url}`);
+          return;
+        }
+        if (button.payload) {
+          lines.push(`${index + 1}. ${button.title}`);
+        }
+      });
+    }
+
+    if (carousel.length > 0) {
+      lines.push('Cards:');
+      carousel.forEach((card, cardIndex) => {
+        if (!card.title) return;
+        lines.push(`${cardIndex + 1}. ${card.title}`);
+        if (card.subtitle) {
+          lines.push(`   ${card.subtitle}`);
+        }
+        (card.buttons || []).forEach((button, buttonIndex) => {
+          if (!button.title) return;
+          if (button.type === 'web_url' && button.url) {
+            lines.push(`   - ${buttonIndex + 1}) ${button.title}: ${button.url}`);
+            return;
+          }
+          if (button.payload) {
+            lines.push(`   - ${buttonIndex + 1}) ${button.title}`);
+          }
+        });
+      });
+    }
+
+    return lines.join('\n').trim();
+  }
+
+  private toFlowStateObject(flowState: any): Record<string, any> {
+    if (!flowState || typeof flowState !== 'object' || Array.isArray(flowState)) {
+      return {};
+    }
+    return { ...(flowState as Record<string, any>) };
+  }
+
+  private normalizeReplyAliasKey(input: string) {
+    return (input || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[).:]+$/g, '')
+      .replace(/\s+/g, ' ');
+  }
+
+  private normalizeStructuredPayload(input: string) {
+    return (input || '').replace(/^payload\s*:\s*/i, '').trim();
+  }
+
+  private buildPendingReplyAliases(
+    quickReplies: FlowQuickReplyOption[],
+    buttons: FlowButtonOption[],
+    carousel: FlowCarouselCard[],
+  ): PendingReplyAliasesState | null {
+    const aliases: Record<string, string> = {};
+
+    const addAlias = (title?: string, payload?: string) => {
+      const normalizedTitle = this.normalizeReplyAliasKey(title || '');
+      const normalizedPayload = (payload || '').trim();
+      if (!normalizedTitle || !normalizedPayload) return;
+      aliases[normalizedTitle] = normalizedPayload;
+    };
+
+    quickReplies.forEach((reply) => addAlias(reply.title, reply.payload));
+
+    buttons.forEach((button) => {
+      if (button.type === 'postback') {
+        addAlias(button.title, button.payload);
+      }
+    });
+
+    carousel.forEach((card) => {
+      (card.buttons || []).forEach((button) => {
+        if (button.type === 'postback') {
+          addAlias(button.title, button.payload);
+        }
+      });
+    });
+
+    if (Object.keys(aliases).length === 0) return null;
+
+    return {
+      aliases,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    };
+  }
+
+  private isPendingReplyAliasesExpired(aliasState: any) {
+    if (!aliasState || typeof aliasState !== 'object') return true;
+    const expiresAt = aliasState.expiresAt;
+    if (!expiresAt || typeof expiresAt !== 'string') return true;
+
+    const expiresAtMs = Date.parse(expiresAt);
+    if (Number.isNaN(expiresAtMs)) return true;
+
+    return Date.now() > expiresAtMs;
+  }
+
+  private resolvePendingReplyPayload(content: string, aliasState: any) {
+    if (!aliasState || typeof aliasState !== 'object') return null;
+    if (this.isPendingReplyAliasesExpired(aliasState)) return null;
+
+    const aliases = aliasState.aliases;
+    if (!aliases || typeof aliases !== 'object') return null;
+
+    const normalizedInput = this.normalizeReplyAliasKey(content || '');
+    if (!normalizedInput) return null;
+
+    const payload = aliases[normalizedInput];
+    if (!payload || typeof payload !== 'string') return null;
+
+    return payload;
+  }
+
   /**
    * Helper to send messages from Flow Result
    */
@@ -383,10 +897,147 @@ export class MessagingService {
       const msgText = msg.text || '';
       let msgImageUrl = msg.imageUrl;
       const msgLocation = msg.location;
+      const msgQuickReplies = Array.isArray(msg.quickReplies)
+        ? msg.quickReplies
+        : [];
+      const msgButtons = Array.isArray(msg.buttons) ? msg.buttons : [];
+      const msgCarousel = Array.isArray(msg.carousel) ? msg.carousel : [];
 
       // Resolve relative upload paths to full URLs for platform APIs
       if (msgImageUrl && msgImageUrl.startsWith('/uploads')) {
         msgImageUrl = `https://api.nighttime77.win${msgImageUrl}`;
+      }
+
+      const hasInteractiveContent =
+        msgQuickReplies.length > 0 || msgButtons.length > 0 || msgCarousel.length > 0;
+
+      if (hasInteractiveContent) {
+        let platformMessageId: string | undefined;
+
+        if (platform.type === 'facebook' || platform.type === 'instagram') {
+          if (msgCarousel.length > 0) {
+            platformMessageId = await this.sendMetaCarouselTemplateMessage(
+              platform,
+              customer.externalId,
+              msgCarousel,
+              msgText,
+            );
+          } else if (msgButtons.length > 0) {
+            platformMessageId = await this.sendMetaButtonTemplateMessage(
+              platform,
+              customer.externalId,
+              msgText,
+              msgButtons,
+            );
+          } else {
+            platformMessageId = await this.sendMetaQuickRepliesMessage(
+              platform,
+              customer.externalId,
+              msgText,
+              msgQuickReplies,
+            );
+          }
+        } else if (platform.type === 'whatsapp') {
+          const whatsappReplyOptions = this.toWhatsAppReplyOptions(
+            msgQuickReplies,
+            msgButtons,
+          );
+          const webUrlButtons = msgButtons.filter(
+            (button) => button.type === 'web_url' && button.url,
+          );
+
+          if (whatsappReplyOptions.length > 0) {
+            platformMessageId = await this.sendWhatsAppInteractiveReplyOptions(
+              platform,
+              customer.externalId,
+              msgText || 'Please choose an option:',
+              whatsappReplyOptions,
+            );
+          }
+
+          if (webUrlButtons.length > 0 || msgCarousel.length > 0) {
+            const extraFallbackText = this.buildInteractiveFallbackText(
+              '',
+              [],
+              webUrlButtons,
+              msgCarousel,
+            );
+
+            if (extraFallbackText) {
+              const fallbackMessageId = await this.sendWhatsAppMessage(
+                platform,
+                customer.externalId,
+                extraFallbackText,
+              );
+              platformMessageId = fallbackMessageId || platformMessageId;
+            }
+          }
+        } else {
+          const fallbackText = this.buildInteractiveFallbackText(
+            msgText,
+            msgQuickReplies,
+            msgButtons,
+            msgCarousel,
+          );
+
+          if (fallbackText) {
+            platformMessageId = await this.sendPlatformMessage(
+              platform,
+              customer.externalId,
+              fallbackText,
+              'text',
+            );
+          }
+        }
+
+        const interactiveSummary =
+          msgText ||
+          (msgCarousel.length > 0
+            ? `Carousel (${msgCarousel.length} cards)`
+            : msgButtons.length > 0
+              ? `Buttons (${msgButtons.length})`
+              : `Quick replies (${msgQuickReplies.length})`);
+
+        const interactiveMessage = await this.prisma.message.create({
+          data: {
+            organizationId: platform.organizationId,
+            conversationId: conversation.id,
+            senderType: 'agent',
+            content: interactiveSummary,
+            contentType: 'interactive',
+            platformMessageId,
+            rawPayload: {
+              quickReplies: msgQuickReplies,
+              buttons: msgButtons,
+              carousel: msgCarousel,
+            },
+          },
+        });
+        this.realtime.emitNewMessage(
+          platform.organizationId,
+          conversation.id,
+          interactiveMessage,
+        );
+
+        const pendingAliases = this.buildPendingReplyAliases(
+          msgQuickReplies,
+          msgButtons,
+          msgCarousel,
+        );
+        if (pendingAliases) {
+          const nextFlowState = {
+            ...this.toFlowStateObject((conversation as any).flowState),
+            pendingReplyAliases: pendingAliases,
+          };
+
+          await this.prisma.conversation.update({
+            where: { id: conversation.id },
+            data: { flowState: nextFlowState } as any,
+          });
+          conversation = { ...conversation, flowState: nextFlowState as any };
+        }
+
+        continue;
       }
 
       // Send Text
@@ -1978,3 +2629,7 @@ export class MessagingService {
     return this.extractPlatformMessageId(response.data);
   }
 }
+
+
+
+

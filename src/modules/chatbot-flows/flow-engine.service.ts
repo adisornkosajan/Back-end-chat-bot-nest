@@ -8,6 +8,27 @@ export interface FlowExecutionResult {
   messages: Array<{
     text: string;
     imageUrl?: string;
+    quickReplies?: Array<{
+      title: string;
+      payload: string;
+    }>;
+    buttons?: Array<{
+      type: 'postback' | 'web_url';
+      title: string;
+      payload?: string;
+      url?: string;
+    }>;
+    carousel?: Array<{
+      title: string;
+      subtitle?: string;
+      imageUrl?: string;
+      buttons?: Array<{
+        type: 'postback' | 'web_url';
+        title: string;
+        payload?: string;
+        url?: string;
+      }>;
+    }>;
     location?: {
       latitude: number;
       longitude: number;
@@ -78,6 +99,122 @@ export class FlowEngineService {
               imageUrl: currentNode.data.imageUrl,
             });
             result.responded = true;
+          }
+
+          currentNode = nodeMap.get(currentNode.nextNodeId || '');
+          break;
+        }
+
+        case 'quick_replies': {
+          const text = this.replaceVariables(
+            currentNode.data.text || 'Please choose an option:',
+            context,
+          );
+          const quickReplies = (currentNode.data.quickReplies || [])
+            .map((reply) => ({
+              title: this.replaceVariables(reply.title || '', context),
+              payload: this.replaceVariables(reply.payload || '', context),
+            }))
+            .filter((reply) => reply.title && reply.payload);
+
+          if (quickReplies.length > 0) {
+            result.messages.push({ text, quickReplies });
+            result.responded = true;
+
+            if (currentNode.nextNodeId) {
+              await this.prisma.conversation.update({
+                where: { id: context.conversationId },
+                data: {
+                  activeFlowId: flow.id,
+                  activeFlowNodeId: currentNode.nextNodeId,
+                  flowResumeAt: null,
+                  flowState: context.flowState || null,
+                } as any,
+              });
+
+              result.status = 'PAUSED';
+              return result;
+            }
+          }
+
+          currentNode = nodeMap.get(currentNode.nextNodeId || '');
+          break;
+        }
+
+        case 'buttons': {
+          const text = this.replaceVariables(
+            currentNode.data.text || 'Please choose an option:',
+            context,
+          );
+          const buttons = this.normalizeButtons(currentNode.data.buttons, context);
+
+          if (buttons.length > 0) {
+            result.messages.push({ text, buttons });
+            result.responded = true;
+
+            if (currentNode.nextNodeId) {
+              await this.prisma.conversation.update({
+                where: { id: context.conversationId },
+                data: {
+                  activeFlowId: flow.id,
+                  activeFlowNodeId: currentNode.nextNodeId,
+                  flowResumeAt: null,
+                  flowState: context.flowState || null,
+                } as any,
+              });
+
+              result.status = 'PAUSED';
+              return result;
+            }
+          }
+
+          currentNode = nodeMap.get(currentNode.nextNodeId || '');
+          break;
+        }
+
+        case 'carousel': {
+          const text = currentNode.data.text
+            ? this.replaceVariables(currentNode.data.text, context)
+            : '';
+
+          const carousel = (currentNode.data.cards || [])
+            .map((card) => {
+              const buttons = this.normalizeButtons(card.buttons, context);
+              const title = this.replaceVariables(card.title || '', context);
+              const subtitle = card.subtitle
+                ? this.replaceVariables(card.subtitle, context)
+                : undefined;
+              const imageUrl = card.imageUrl
+                ? this.replaceVariables(card.imageUrl, context)
+                : undefined;
+
+              return {
+                title,
+                subtitle,
+                imageUrl,
+                ...(buttons.length > 0 && { buttons }),
+              };
+            })
+            .filter((card) => card.title);
+
+          if (carousel.length > 0) {
+            result.messages.push({ text, carousel });
+            result.responded = true;
+
+            if (currentNode.nextNodeId) {
+              await this.prisma.conversation.update({
+                where: { id: context.conversationId },
+                data: {
+                  activeFlowId: flow.id,
+                  activeFlowNodeId: currentNode.nextNodeId,
+                  flowResumeAt: null,
+                  flowState: context.flowState || null,
+                } as any,
+              });
+
+              result.status = 'PAUSED';
+              return result;
+            }
           }
 
           currentNode = nodeMap.get(currentNode.nextNodeId || '');
@@ -245,6 +382,52 @@ export class FlowEngineService {
     );
 
     return result;
+  }
+
+  private normalizeButtons(
+    buttons:
+      | Array<{
+          type: 'postback' | 'web_url';
+          title: string;
+          payload?: string;
+          url?: string;
+        }>
+      | undefined,
+    context: {
+      customerMessage: string;
+      customerId: string;
+      platform: any;
+      flowState?: any;
+    },
+  ): Array<{
+    type: 'postback' | 'web_url';
+    title: string;
+    payload?: string;
+    url?: string;
+  }> {
+    return (buttons || [])
+      .map((button) => {
+        const type = button.type === 'web_url' ? 'web_url' : 'postback';
+        const title = this.replaceVariables(button.title || '', context);
+        const payload = button.payload
+          ? this.replaceVariables(button.payload, context)
+          : undefined;
+        const url = button.url
+          ? this.replaceVariables(button.url, context)
+          : undefined;
+
+        if (!title) return null;
+        if (type === 'postback' && !payload) return null;
+        if (type === 'web_url' && !url) return null;
+
+        return {
+          type: type as 'postback' | 'web_url',
+          title,
+          payload,
+          url,
+        };
+      })
+      .filter((button): button is NonNullable<typeof button> => !!button);
   }
 
   private evaluateCondition(

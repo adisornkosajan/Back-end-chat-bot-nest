@@ -80,9 +80,13 @@ export class WhatsAppAdapter {
       case 'interactive':
         // Handle button replies, list replies, etc.
         if (message.interactive?.type === 'button_reply') {
-          messageText = message.interactive.button_reply.title;
+          messageText =
+            message.interactive.button_reply.id ||
+            message.interactive.button_reply.title;
         } else if (message.interactive?.type === 'list_reply') {
-          messageText = message.interactive.list_reply.title;
+          messageText =
+            message.interactive.list_reply.id ||
+            message.interactive.list_reply.title;
         }
         contentType = 'interactive';
         break;

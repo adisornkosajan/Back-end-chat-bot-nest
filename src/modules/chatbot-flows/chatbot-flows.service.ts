@@ -3,11 +3,44 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 export interface FlowNode {
   id: string;
-  type: 'message' | 'condition' | 'delay' | 'action' | 'collect_input' | 'location';
+  type:
+    | 'message'
+    | 'condition'
+    | 'delay'
+    | 'action'
+    | 'collect_input'
+    | 'location'
+    | 'quick_replies'
+    | 'buttons'
+    | 'carousel';
   data: {
     // message type
     text?: string;
     imageUrl?: string;
+    // quick_replies type
+    quickReplies?: Array<{
+      title: string;
+      payload: string;
+    }>;
+    // buttons type
+    buttons?: Array<{
+      type: 'postback' | 'web_url';
+      title: string;
+      payload?: string;
+      url?: string;
+    }>;
+    // carousel type
+    cards?: Array<{
+      title: string;
+      subtitle?: string;
+      imageUrl?: string;
+      buttons?: Array<{
+        type: 'postback' | 'web_url';
+        title: string;
+        payload?: string;
+        url?: string;
+      }>;
+    }>;
     // condition type
     variable?: string; // e.g., 'message', 'platform', 'tag'
     operator?: string; // contains, equals, startsWith
@@ -34,6 +67,14 @@ export interface FlowNode {
 @Injectable()
 export class ChatbotFlowsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private normalizeMatchToken(input: string): string {
+    return (input || '')
+      .replace(/^#/, '')
+      .replace(/^payload\s*:\s*/i, '')
+      .trim()
+      .toLowerCase();
+  }
 
   /**
    * List all flows for an organization
@@ -152,17 +193,46 @@ export class ChatbotFlowsService {
     });
     console.log('Active flows:', activeFlows);
 
-    const lowerMessage = message.toLowerCase();
+    const normalizedMessage = this.normalizeMatchToken(message || '');
+    if (!normalizedMessage) return null;
+
+    const exactMatches: Array<{ flow: any; keyword: string }> = [];
+    const partialMatches: Array<{ flow: any; keyword: string }> = [];
 
     for (const flow of activeFlows) {
       const keywords = (flow.triggerKeywords as string[]) || [];
       for (const keyword of keywords) {
         // Strip leading # from keywords (users may prefix with #)
-        const cleanKeyword = keyword.replace(/^#/, '').toLowerCase();
-        if (cleanKeyword && lowerMessage.includes(cleanKeyword)) {
-          return flow;
+        const cleanKeyword = this.normalizeMatchToken(keyword || '');
+        if (!cleanKeyword) continue;
+
+        if (normalizedMessage === cleanKeyword) {
+          exactMatches.push({ flow, keyword: cleanKeyword });
+          continue;
+        }
+
+        if (normalizedMessage.includes(cleanKeyword)) {
+          partialMatches.push({ flow, keyword: cleanKeyword });
         }
       }
+    }
+
+    // Prefer exact match first (important for payload-like values such as MENU_A).
+    if (exactMatches.length > 0) {
+      exactMatches.sort((a, b) => b.keyword.length - a.keyword.length);
+      return exactMatches[0].flow;
+    }
+
+    // Payload-like messages should not fall back to partial contains matching.
+    const isPayloadLike = /[_:|]/.test(normalizedMessage);
+    if (isPayloadLike) {
+      return null;
+    }
+
+    if (partialMatches.length > 0) {
+      // Prefer more specific keyword when multiple flows match.
+      partialMatches.sort((a, b) => b.keyword.length - a.keyword.length);
+      return partialMatches[0].flow;
     }
 
     return null;
