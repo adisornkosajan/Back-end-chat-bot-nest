@@ -47,7 +47,7 @@ export class CustomerSummaryService {
           conversationId,
           senderType: 'customer',
         },
-        select: { senderType: true, content: true },
+        select: { senderType: true, content: true, contentType: true },
         orderBy: { createdAt: 'desc' },
         take: 3,
       });
@@ -55,7 +55,7 @@ export class CustomerSummaryService {
       const fallbackImportant =
         fallbackMessages.length > 0
           ? this.buildFallbackSummary(fallbackMessages.reverse())
-          : 'No important information yet.';
+          : '';
 
       return {
         id: '',
@@ -65,7 +65,7 @@ export class CustomerSummaryService {
         name: conversation.customer.name ?? null,
         email: conversation.customer.email ?? null,
         mobile: conversation.customer.phone ?? null,
-        importantKey: fallbackImportant,
+        importantKey: fallbackImportant || null,
         createdAt: conversation.createdAt,
         updatedAt: conversation.updatedAt,
         isFallback: true,
@@ -277,7 +277,9 @@ export class CustomerSummaryService {
     );
 
     const parsed = this.parseJsonFromText(aiText);
-    const fallbackSummary = this.buildFallbackSummary(messages);
+    const fallbackSummary =
+      this.buildFallbackSummary(messages) ||
+      'Customer contacted support. Please review recent chat messages.';
     const summaryText = this.asText(parsed?.summary) || fallbackSummary;
     const nextBestAction = this.asText(parsed?.nextBestAction) || 'Follow up with a clear next step and confirmation.';
     const customerName = this.asText(parsed?.customerName) || conversation.customer?.name || '';
@@ -317,18 +319,69 @@ export class CustomerSummaryService {
   }
 
   private buildFallbackSummary(
-    messages: Array<{ senderType: string; content: string | null }>,
+    messages: Array<{
+      senderType: string;
+      content: string | null;
+      contentType?: string | null;
+    }>,
   ): string {
     const customerMessages = messages
       .filter((m) => m.senderType === 'customer' && m.content)
+      .map((m) => this.normalizeMessageText(m.content))
+      .filter((content) => this.isMeaningfulCustomerMessage(content))
       .slice(-3)
-      .map((m) => m.content as string);
+      .map((content) => content as string);
 
     if (!customerMessages.length) {
-      return 'Customer contacted support. Please review recent chat messages.';
+      return '';
     }
 
     return `Customer main points: ${customerMessages.join(' | ')}`;
+  }
+
+  private normalizeMessageText(value: string | null): string {
+    if (!value) return '';
+    return value.replace(/\s+/g, ' ').trim();
+  }
+
+  private isMeaningfulCustomerMessage(content: string): boolean {
+    if (!content) return false;
+
+    const lower = content.toLowerCase();
+    const upper = content.toUpperCase();
+
+    const isMenuPayload =
+      /^MENU_[A-Z0-9_]+$/.test(upper) ||
+      /^BUTTON_[A-Z0-9_]+$/.test(upper) ||
+      /^BTN_[A-Z0-9_]+$/.test(upper) ||
+      /^PAYLOAD\s*:/.test(upper) ||
+      /^[A-D]$/.test(upper);
+
+    if (isMenuPayload) return false;
+
+    const lowValueInputs = new Set([
+      'hi',
+      'hii',
+      'hello',
+      'hey',
+      'ok',
+      'okay',
+      'yes',
+      'no',
+      'test',
+      'aaa',
+      'bbb',
+      'ccc',
+      'สวัสดี',
+      'ครับ',
+      'ค่ะ',
+    ]);
+
+    if (lowValueInputs.has(lower)) return false;
+
+    if (content.length <= 2) return false;
+
+    return true;
   }
 
   private extractEmail(text: string): string {
