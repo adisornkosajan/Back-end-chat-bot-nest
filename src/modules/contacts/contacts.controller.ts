@@ -101,12 +101,14 @@ export class ContactsController {
   async updateContact(
     @Req() req: any,
     @Param('id') id: string,
-    @Body() body: { name?: string; email?: string; phone?: string },
+    @Body() body: { name?: string; email?: string; phone?: string; importantKey?: string },
   ) {
+    const userId = req.user?.id || req.user?.sub || req.user?.userId;
     return this.contactsService.updateContact(
       req.user.organizationId,
       id,
       body,
+      userId,
     );
   }
 

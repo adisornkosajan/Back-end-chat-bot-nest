@@ -58,6 +58,18 @@ export class ContactsService {
               tag: true,
             },
           },
+          conversations: {
+            orderBy: { lastMessageAt: 'desc' },
+            take: 1,
+            select: {
+              customerSummary: {
+                select: {
+                  importantKey: true,
+                  updatedAt: true,
+                },
+              },
+            },
+          },
           _count: {
             select: { conversations: true },
           },
@@ -74,6 +86,10 @@ export class ContactsService {
         ...c,
         tags: c.customerTags.map((ct) => ct.tag),
         conversationCount: c._count.conversations,
+        importantKey:
+          c.conversations[0]?.customerSummary?.importantKey || null,
+        importantUpdatedAt:
+          c.conversations[0]?.customerSummary?.updatedAt || null,
       })),
       pagination: {
         page,
@@ -119,7 +135,8 @@ export class ContactsService {
   async updateContact(
     organizationId: string,
     customerId: string,
-    data: { name?: string; email?: string; phone?: string },
+    data: { name?: string; email?: string; phone?: string; importantKey?: string },
+    userId?: string,
   ) {
     const customer = await this.prisma.customer.findFirst({
       where: { id: customerId, organizationId },
@@ -129,13 +146,98 @@ export class ContactsService {
       throw new NotFoundException('Contact not found');
     }
 
-    return this.prisma.customer.update({
-      where: { id: customerId },
-      data,
-      include: {
-        platform: { select: { id: true, type: true, pageId: true } },
-        customerTags: { include: { tag: true } },
-      },
+    const name = this.normalizeOptionalText(data.name);
+    const email = this.normalizeOptionalText(data.email);
+    const phone = this.normalizeOptionalText(data.phone);
+    const importantKey = this.normalizeOptionalText(data.importantKey);
+
+    const customerPatch: any = {};
+    if (data.name !== undefined) customerPatch.name = name;
+    if (data.email !== undefined) customerPatch.email = email;
+    if (data.phone !== undefined) customerPatch.phone = phone;
+
+    return this.prisma.$transaction(async (tx) => {
+      const updatedCustomer = await tx.customer.update({
+        where: { id: customerId },
+        data: customerPatch,
+        include: {
+          platform: { select: { id: true, type: true, pageId: true } },
+          customerTags: { include: { tag: true } },
+        },
+      });
+
+      const conversations = await tx.conversation.findMany({
+        where: { organizationId, customerId },
+        orderBy: { lastMessageAt: 'desc' },
+        select: { id: true },
+      });
+      const conversationIds = conversations.map((c) => c.id);
+
+      if (conversationIds.length > 0) {
+        const summaries = await tx.customerSummary.findMany({
+          where: {
+            organizationId,
+            conversationId: { in: conversationIds },
+          },
+          select: {
+            id: true,
+            name: true,
+            mobile: true,
+            email: true,
+            importantKey: true,
+          },
+        });
+
+        const summaryPatch: any = {};
+        if (data.name !== undefined) summaryPatch.name = name;
+        if (data.email !== undefined) summaryPatch.email = email;
+        if (data.phone !== undefined) summaryPatch.mobile = phone;
+        if (data.importantKey !== undefined) summaryPatch.importantKey = importantKey;
+
+        if (summaries.length > 0 && Object.keys(summaryPatch).length > 0) {
+          if (userId) {
+            await tx.customerSummaryHistory.createMany({
+              data: summaries.map((s) => ({
+                summaryId: s.id,
+                name: s.name,
+                mobile: s.mobile,
+                email: s.email,
+                importantKey: s.importantKey,
+                editedBy: userId,
+              })),
+            });
+          }
+
+          await tx.customerSummary.updateMany({
+            where: {
+              organizationId,
+              id: { in: summaries.map((s) => s.id) },
+            },
+            data: {
+              ...summaryPatch,
+              updatedAt: new Date(),
+            },
+          });
+        } else if (
+          summaries.length === 0 &&
+          data.importantKey !== undefined &&
+          conversationIds.length > 0
+        ) {
+          await tx.customerSummary.create({
+            data: {
+              organizationId,
+              conversationId: conversationIds[0],
+              name: updatedCustomer.name,
+              mobile: updatedCustomer.phone,
+              email: updatedCustomer.email,
+              importantKey,
+              createdBy: userId || null,
+            },
+          });
+        }
+      }
+
+      return updatedCustomer;
     });
   }
 
@@ -310,5 +412,14 @@ export class ContactsService {
         count: p._count.id,
       })),
     };
+  }
+
+  private normalizeOptionalText(
+    value: string | null | undefined,
+  ): string | null | undefined {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
   }
 }

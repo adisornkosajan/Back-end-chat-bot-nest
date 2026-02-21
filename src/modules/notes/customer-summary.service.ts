@@ -10,12 +10,75 @@ export class CustomerSummaryService {
   ) {}
 
   async findByConversation(organizationId: string, conversationId: string) {
-    return this.prisma.customerSummary.findFirst({
+    const conversation = await this.prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        organizationId,
+      },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          phone: true,
+          },
+        },
+      },
+    });
+
+    if (!conversation) {
+      return null;
+    }
+
+    const summary = await this.prisma.customerSummary.findFirst({
       where: {
         organizationId,
         conversationId,
       },
     });
+
+    // First-open fallback: return contact identity fields even when
+    // no summary record has been created yet.
+    if (!summary) {
+      const fallbackMessages = await this.prisma.message.findMany({
+        where: {
+          organizationId,
+          conversationId,
+          senderType: 'customer',
+        },
+        select: { senderType: true, content: true },
+        orderBy: { createdAt: 'desc' },
+        take: 3,
+      });
+
+      const fallbackImportant =
+        fallbackMessages.length > 0
+          ? this.buildFallbackSummary(fallbackMessages.reverse())
+          : 'No important information yet.';
+
+      return {
+        id: '',
+        organizationId,
+        conversationId,
+        customerId: conversation.customer.id,
+        name: conversation.customer.name ?? null,
+        email: conversation.customer.email ?? null,
+        mobile: conversation.customer.phone ?? null,
+        importantKey: fallbackImportant,
+        createdAt: conversation.createdAt,
+        updatedAt: conversation.updatedAt,
+        isFallback: true,
+      };
+    }
+
+    return {
+      ...summary,
+      customerId: conversation.customer.id,
+      name: summary.name ?? conversation.customer.name ?? null,
+      email: summary.email ?? conversation.customer.email ?? null,
+      mobile: summary.mobile ?? conversation.customer.phone ?? null,
+    };
   }
 
   async getHistory(organizationId: string, conversationId: string) {
@@ -63,48 +126,91 @@ export class CustomerSummaryService {
     if (!userId) {
       throw new Error('User ID is required to create customer summary');
     }
-    
-    // Check if summary already exists
-    const existing = await this.prisma.customerSummary.findFirst({
+
+    const normalizedName = this.normalizeOptionalText(data.name);
+    const normalizedMobile = this.normalizeOptionalText(data.mobile);
+    const normalizedEmail = this.normalizeOptionalText(data.email);
+    const normalizedImportantKey = this.normalizeOptionalText(data.importantKey);
+
+    const summaryPatch: any = {};
+    if (data.name !== undefined) summaryPatch.name = normalizedName;
+    if (data.mobile !== undefined) summaryPatch.mobile = normalizedMobile;
+    if (data.email !== undefined) summaryPatch.email = normalizedEmail;
+    if (data.importantKey !== undefined)
+      summaryPatch.importantKey = normalizedImportantKey;
+
+    const conversation = await this.prisma.conversation.findFirst({
       where: {
+        id: conversationId,
         organizationId,
-        conversationId,
+      },
+      select: {
+        id: true,
+        customerId: true,
       },
     });
 
-    if (existing) {
-      await this.prisma.customerSummaryHistory.create({
-        data: {
-          summaryId: existing.id,
-          name: existing.name,
-          mobile: existing.mobile,
-          email: existing.email,
-          importantKey: existing.importantKey,
-          editedBy: userId,
+    if (!conversation) {
+      throw new Error('Conversation not found');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Check if summary already exists
+      const existing = await tx.customerSummary.findFirst({
+        where: {
+          organizationId,
+          conversationId,
         },
       });
 
-      // Update existing summary
-      return this.prisma.customerSummary.update({
-        where: { id: existing.id },
-        data: {
-          ...data,
-          updatedAt: new Date(),
-        },
-      });
-    } else {
-      // Create new summary
-      const createData: any = {
-        organizationId,
-        conversationId,
-        ...data,
-        createdBy: userId,
-      };
-      
-      return this.prisma.customerSummary.create({
-        data: createData,
-      });
-    }
+      let savedSummary: any;
+      if (existing) {
+        await tx.customerSummaryHistory.create({
+          data: {
+            summaryId: existing.id,
+            name: existing.name,
+            mobile: existing.mobile,
+            email: existing.email,
+            importantKey: existing.importantKey,
+            editedBy: userId,
+          },
+        });
+
+        // Update existing summary
+        savedSummary = await tx.customerSummary.update({
+          where: { id: existing.id },
+          data: {
+            ...summaryPatch,
+            updatedAt: new Date(),
+          },
+        });
+      } else {
+        // Create new summary
+        savedSummary = await tx.customerSummary.create({
+          data: {
+            organizationId,
+            conversationId,
+            ...summaryPatch,
+            createdBy: userId,
+          },
+        });
+      }
+
+      // Sync summary identity fields back to Contacts (customer record).
+      const customerPatch: any = {};
+      if (data.name !== undefined) customerPatch.name = normalizedName;
+      if (data.mobile !== undefined) customerPatch.phone = normalizedMobile;
+      if (data.email !== undefined) customerPatch.email = normalizedEmail;
+
+      if (Object.keys(customerPatch).length > 0) {
+        await tx.customer.update({
+          where: { id: conversation.customerId },
+          data: customerPatch,
+        });
+      }
+
+      return savedSummary;
+    });
   }
 
   async delete(organizationId: string, conversationId: string) {
@@ -233,5 +339,14 @@ export class CustomerSummaryService {
   private extractMobile(text: string): string {
     const match = text.match(/\b\d{9,15}\b/);
     return match ? match[0] : '';
+  }
+
+  private normalizeOptionalText(
+    value: string | null | undefined,
+  ): string | null | undefined {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
   }
 }
