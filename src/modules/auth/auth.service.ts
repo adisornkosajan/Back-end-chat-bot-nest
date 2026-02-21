@@ -9,6 +9,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly facebookWebhookFields =
+    'messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,messaging_referrals';
 
   constructor(
     private readonly usersService: UsersService,
@@ -469,6 +471,16 @@ export class AuthService {
       // Save platforms to database
       const savedPlatforms: any[] = [];
       for (const page of pages) {
+        let webhookSubscribed = false;
+        try {
+          await this.ensureFacebookWebhookSubscription(page.id, page.access_token);
+          webhookSubscribed = true;
+        } catch (error) {
+          this.logger.warn(
+            `⚠️ Failed to subscribe webhook for Facebook page ${page.id} (${page.name}): ${error.message}`,
+          );
+        }
+
         // Save Facebook Page
         const fbPlatform = await this.prisma.platform.upsert({
           where: {
@@ -480,9 +492,11 @@ export class AuthService {
           },
           update: {
             accessToken: page.access_token,
+            isActive: true,
             credentials: {
               pageId: page.id,
               pageName: page.name,
+              webhookSubscribed,
             },
           },
           create: {
@@ -493,6 +507,7 @@ export class AuthService {
             credentials: {
               pageId: page.id,
               pageName: page.name,
+              webhookSubscribed,
             },
           },
         });
@@ -511,6 +526,7 @@ export class AuthService {
             },
             update: {
               accessToken: page.access_token, // ใช้ page token เหมือนกัน
+              isActive: true,
               credentials: {
                 instagramAccountId: igAccount.id,
                 username: igAccount.username,
@@ -547,6 +563,7 @@ export class AuthService {
           },
           update: {
             accessToken: longLivedToken, // ใช้ long-lived token
+            isActive: true,
             credentials: {
               phoneNumberId: waAccount.phoneNumberId,
               displayPhoneNumber: waAccount.displayPhoneNumber,
@@ -590,6 +607,22 @@ export class AuthService {
       this.logger.error('❌ OAuth callback error:', error.response?.data || error.message);
       throw new UnauthorizedException('Failed to process OAuth callback');
     }
+  }
+
+  private async ensureFacebookWebhookSubscription(
+    pageId: string,
+    pageAccessToken: string,
+  ): Promise<void> {
+    await axios.post(
+      `https://graph.facebook.com/v21.0/${pageId}/subscribed_apps`,
+      null,
+      {
+        params: {
+          access_token: pageAccessToken,
+          subscribed_fields: this.facebookWebhookFields,
+        },
+      },
+    );
   }
 
   async getUserById(userId: string, organizationId: string) {

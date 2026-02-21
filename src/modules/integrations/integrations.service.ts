@@ -6,6 +6,8 @@ import axios from 'axios';
 @Injectable()
 export class IntegrationsService {
   private readonly logger = new Logger(IntegrationsService.name);
+  private readonly facebookWebhookFields =
+    'messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,messaging_referrals';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -143,6 +145,8 @@ export class IntegrationsService {
         );
       }
 
+      await this.ensureFacebookWebhookSubscription(page.id, page.access_token);
+
       // Save/Update platform with page details
       const platform = await this.prisma.platform.upsert({
         where: {
@@ -192,6 +196,9 @@ export class IntegrationsService {
       };
     } catch (error) {
       this.logger.error('Failed to connect Facebook page:', error.response?.data || error.message);
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
       throw new BadRequestException('Failed to connect Facebook page');
     }
   }
@@ -220,6 +227,34 @@ export class IntegrationsService {
       success: true,
       message: 'Facebook page disconnected',
     };
+  }
+
+  private async ensureFacebookWebhookSubscription(
+    pageId: string,
+    pageAccessToken: string,
+  ): Promise<void> {
+    try {
+      await axios.post(
+        `https://graph.facebook.com/v21.0/${pageId}/subscribed_apps`,
+        null,
+        {
+          params: {
+            access_token: pageAccessToken,
+            subscribed_fields: this.facebookWebhookFields,
+          },
+        },
+      );
+      this.logger.log(`✅ Facebook page webhook subscribed: ${pageId}`);
+    } catch (error) {
+      const reason =
+        error?.response?.data?.error?.message || error?.message || 'Unknown error';
+      this.logger.error(
+        `❌ Failed to subscribe Facebook page webhook (${pageId}): ${reason}`,
+      );
+      throw new BadRequestException(
+        'Failed to subscribe webhook for this Facebook Page. Please reconnect and grant all requested permissions.',
+      );
+    }
   }
 
   // ==================== INSTAGRAM ====================

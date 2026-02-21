@@ -26,7 +26,19 @@ export class OrganizationsController {
   @Roles(UserRole.SUPER_ADMIN)
   async updateCurrentOrganization(
     @Req() req: any,
-    @Body() body: { name?: string; address?: string; contact?: string; trn?: string; description?: string },
+    @Body()
+    body: {
+      name?: string;
+      address?: string;
+      contact?: string;
+      trn?: string;
+      description?: string;
+      socialContacts?: {
+        facebook?: string[];
+        instagram?: string[];
+        whatsapp?: string[];
+      };
+    },
   ) {
     return this.organizationsService.updateOrganization(req.user.organizationId, body);
   }

@@ -613,6 +613,16 @@ export class MessagingService {
       throw new Error('Conversation not found');
     }
 
+    if (!conversation.platform?.isActive) {
+      throw new BadRequestException({
+        message:
+          'This channel is disconnected. Reconnect the page/account in Connections before sending messages.',
+        code: 'PLATFORM_DISCONNECTED',
+        platform: conversation.platform?.type,
+        pageId: conversation.platform?.pageId,
+      });
+    }
+
     const text = typeof content === 'string' ? content.trim() : '';
     if (!file && !text) {
       throw new Error('Message content is required');
@@ -887,6 +897,41 @@ export class MessagingService {
   }
 
   private mapPlatformSendError(platformType: string, error: any): Error {
+    // Facebook/Instagram permission and token errors
+    if (
+      (platformType === 'facebook' || platformType === 'instagram') &&
+      error?.response?.data?.error
+    ) {
+      const metaError = error.response.data.error;
+      const errorCode = metaError.code;
+      const errorMessage = metaError.message || '';
+
+      const missingPermission =
+        /pages_messaging|pages_manage_metadata|pages_read_engagement|impersonating a user'?s page/i.test(
+          errorMessage,
+        );
+
+      if (errorCode === 190 && missingPermission) {
+        return new BadRequestException({
+          message:
+            'Page permission/token is invalid for sending messages. Reconnect this page in Connections and grant all requested Meta permissions.',
+          code: 'META_PAGE_PERMISSION_MISSING',
+          platform: platformType,
+          originalError: errorMessage,
+        });
+      }
+
+      if (errorCode === 190) {
+        return new BadRequestException({
+          message:
+            'Meta access token is invalid or expired. Reconnect this page/account in Connections.',
+          code: 'META_INVALID_TOKEN',
+          platform: platformType,
+          originalError: errorMessage,
+        });
+      }
+    }
+
     // WhatsApp-specific errors
     if (platformType === 'whatsapp' && error?.response?.data?.error) {
       const waError = error.response.data.error;
